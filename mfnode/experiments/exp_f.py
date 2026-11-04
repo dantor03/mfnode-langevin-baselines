@@ -4,15 +4,14 @@ exp_f.py — Experimento F: Distribución de ν* en make_circles (simetría SO(2
 =============================================================================
 """
 
-import os
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, style_ax
+from ..config import DEVICE
 from ..data import get_circles
 from ..model import MeanFieldResNet
 from ..train import train
+from ..plotting import publish
 
 
 # =============================================================================
@@ -62,12 +61,13 @@ def experiment_F(n_seeds: int = 10, n_epochs: int = 700):
         al mínimo; el ruido permite visualizar la distribución estacionaria de
         los parámetros ν_t* ∝ exp(−J(θ)/ε), no solo un estimador puntual.
 
-    FIGURAS GENERADAS (F_circles_parameter_distribution.png):
-        Panel único: curvas de pérdida J de F1 (rojo) y F2 (azul) superpuestas.
-          • Curvas individuales por seed en trazo fino y transparente (alpha=0.25)
-          • Media sobre seeds en trazo grueso
-          • Banda ±1σ alrededor de la media
-          • Leyenda con J* media ± std para cada sub-experimento
+    FIGURA (F_circles_parameter_distribution.png, datos en figures/data/F.npz), 1×3:
+        • J por época de F1 y F2 (runs en trazo fino, media en grueso); la
+          leyenda da la media de las últimas 50 épocas, porque pSGLD oscila
+          alrededor del mínimo en lugar de converger a él
+        • pesos de entrada a₁ᵐ de todos los runs de F2, coloreados por ‖a₀ᵐ‖
+        • histograma del ángulo de a₁ᵐ ponderado por ‖a₀ᵐ‖ frente al uniforme:
+          si ν* hereda la simetría SO(2) de los datos, debe salir plano
     """
     print("\n" + "=" * 62)
     print("EXPERIMENTO F  —  ν* en make_circles: simetría y robustez")
@@ -115,48 +115,24 @@ def experiment_F(n_seeds: int = 10, n_epochs: int = 700):
     print(f"\n  Acc media F1 (datos): {acc_F1.mean():.4f} ± {acc_F1.std():.4f}")
     print(f"  Acc media F2 (init):  {acc_F2.mean():.4f} ± {acc_F2.std():.4f}")
 
-    # ── Figura F ──────────────────────────────────────────────────────────────
-    fig, ax0 = plt.subplots(1, 1, figsize=(8, 6))
-    fig.patch.set_facecolor(DARK_BG)
+    # ── Datos de la figura ───────────────────────────────────────────────────
+    def _params(results):
+        """a₀ᵐ y a₁ᵐ de cada run: arrays (n_runs, M, 2)."""
+        a0, a1 = [], []
+        with torch.no_grad():
+            for r in results:
+                v = r['model'].velocity
+                a0.append(v.W0.weight.t().cpu().numpy())
+                a1.append(v.W1.weight[:, :2].cpu().numpy())
+        return np.stack(a0), np.stack(a1)
 
-    # ── Panel único: curvas de pérdida F1 y F2 superpuestas ──────────────────
-    for results, color, label in [
-        (results_F1, '#e74c3c', 'F1 (datos)'),
-        (results_F2, '#3498db', 'F2 (init)'),
-    ]:
-        losses    = np.array([r['hist']['loss'] for r in results])
-        mean_l    = losses.mean(axis=0)
-        std_l     = losses.std(axis=0)
-        epochs    = np.arange(len(mean_l))
-        # pSGLD explores ν* ∝ exp(-J/ε): the loss oscillates around the minimum,
-        # not converging to it.  J_final = mean of last 50 epochs captures the
-        # steady-state level; J* (minimum at any epoch) would be misleading.
-        J_final_arr = np.array([np.mean(r['hist']['loss'][-50:]) for r in results])
-        for r in results:
-            ax0.plot(r['hist']['loss'], color=color, lw=0.7, alpha=0.25)
-        ax0.plot(mean_l, color=color, lw=2.0,
-                 label=(f'{label}  '
-                        rf'$\bar{{J}}_{{final}}$={J_final_arr.mean():.4f}'
-                        rf'$\pm${J_final_arr.std():.4f}'))
-        ax0.fill_between(epochs, mean_l - std_l, mean_l + std_l,
-                         color=color, alpha=0.15)
-    style_ax(ax0,
-             'Convergencia — make_circles  (ε=0.01)\n'
-             r'pSGLD explora $\nu^*\!\propto\!\exp(-J/\varepsilon)$: '
-             r'$\bar{J}_{final}$ = media de las últimas 50 épocas',
-             'Época', 'J (BCE + ε·reg)')
-    ax0.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7)
-
-    # ── Título global ─────────────────────────────────────────────────────────
-    fig.suptitle(
-        r'Experimento F — Convergencia en make\_circles  (ε=0.01)'
-        '\n'
-        r'F1: $\gamma_0$ aleatoria (10 datasets), $\theta_0$ fija  |  '
-        r'F2: $\gamma_0$ fija, $\theta_0$ aleatoria (10 inits)',
-        color=TXT, fontsize=11
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.90])
-    out = os.path.join(OUTPUT_DIR, 'F_circles_parameter_distribution.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
+    a0_f1, a1_f1 = _params(results_F1)
+    a0_f2, a1_f2 = _params(results_F2)
+    publish('F', dict(
+        eps=EPS, data_seed=DATA_SEED_FIXED, init_seed=INIT_SEED_FIXED,
+        loss_f1=[r['hist']['loss'] for r in results_F1],
+        loss_f2=[r['hist']['loss'] for r in results_F2],
+        acc_f1=acc_F1, acc_f2=acc_F2,
+        a0_f1=a0_f1, a1_f1=a1_f1, a0_f2=a0_f2, a1_f2=a1_f2,
+    ))
+    return results_F1, results_F2

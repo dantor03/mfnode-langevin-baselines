@@ -4,16 +4,15 @@ exp_b.py — Experimento B: Efecto del parámetro de regularización entrópica 
 =============================================================================
 """
 
-import os
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
-from ..config import SEED, DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, COLORS_EPS, style_ax
+from ..config import SEED, DEVICE
 from ..data import get_moons
 from ..model import MeanFieldResNet
 from ..train import train, mu_pl_estimate
-from ..plots import plot_decision_boundary
+from ..plots import decision_grid, velocity_grid
+from ..plotting import publish
 
 
 # =============================================================================
@@ -60,11 +59,12 @@ def experiment_B(epsilons=None, n_epochs: int = 700):
         por lo que el ruido es coherente con el rol teórico de ε como temperatura.
         Con ε=0 el ruido es exactamente cero (se recupera SGD puro).
 
-    FIGURAS GENERADAS:
-        B1 — Curvas de convergencia: J total, accuracy, reg. supercoerciva de energía
+    FIGURAS GENERADAS (datos en figures/data/B.npz):
+        B1 — 1×3: J (log), accuracy (media móvil) y energía del prior por
+             parámetro, una curva por ε (azules de claro a oscuro).
              Esperado: todas las ε convergen a ~100% acc; J* crece con ε
-        B2 — Figura 2×n_eps: fila superior = fronteras de decisión para cada ε,
-             fila inferior = campo de velocidad F(x, t=0.5) para cada ε.
+        B2 — 1×n_eps: frontera de decisión con P(y=1|x) sombreada y campo
+             F(x, t=0.5) con escala común de flechas, en [−2.5, 2.5]².
              Esperado: fronteras más suaves para ε mayor; campo más uniforme.
     """
     if epsilons is None:
@@ -77,7 +77,7 @@ def experiment_B(epsilons=None, n_epochs: int = 700):
     X, y, X_np, y_np = get_moons()
     results = {}
 
-    for eps, col in zip(epsilons, COLORS_EPS):
+    for eps in epsilons:
         print(f"\n  ε = {eps} ─────────────────────────────────────────")
         # Semilla fija → misma inicialización para todos los ε.
         # Así la única diferencia entre modelos es ε (temperatura Langevin
@@ -87,108 +87,28 @@ def experiment_B(epsilons=None, n_epochs: int = 700):
         hist  = train(model, X, y, epsilon=eps, n_epochs=n_epochs,
                       verbose=False, use_sgld=True)
         mu    = mu_pl_estimate(hist)
-        results[eps] = {'model': model, 'hist': hist, 'color': col}
+        results[eps] = {'model': model, 'hist': hist, 'mu': mu}
         print(f"    J*={hist['J_star']:.5f} | μ_PL={mu:.5f} "
               f"| acc={hist['accuracy'][-1]:.4f}")
 
-    n_eps = len(epsilons)
-
-    # ── B1: Curvas de convergencia ───────────────────────────────────────────
-    def _smooth(arr, w=15):
-        """Running mean with window w (valid padding)."""
-        kernel = np.ones(w) / w
-        return np.convolve(arr, kernel, mode='valid')
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    fig.patch.set_facecolor(DARK_BG)
-    for eps, res in results.items():
-        h   = res['hist']
-        col = res['color']
-        axes[0].plot(h['loss'],                       color=col, lw=1.5, label=f'ε={eps}')
-        # Accuracy is noisy for large ε (pSGLD noise): show raw thin + smoothed thick
-        acc_raw = np.array(h['accuracy'])
-        axes[1].plot(acc_raw, color=col, lw=0.6, alpha=0.30)
-        acc_sm  = _smooth(acc_raw)
-        axes[1].plot(np.arange(len(acc_sm)), acc_sm, color=col, lw=1.8,
-                     label=f'ε={eps}')
-        axes[2].plot(h['loss_reg'], color=col, lw=1.5, label=f'ε={eps}')
-    J_CLIP  = 0.5   # ε=0.5 llega a ~3 y aplasta las demás curvas; se recorta
-    REG_CLIP = 0.15  # misma razón para el panel de energía
-
-    style_ax(axes[0],
-             f'Pérdida total $J$ vs época  (recortado a {J_CLIP})\n'
-             r'ε=0.5 supera el límite (J $\sim$ 1.5–3): queda fuera de rango',
-             'Época', '$J$')
-    style_ax(axes[1],
-             'Accuracy vs época\n'
-             r'Trazo grueso = media móvil (ventana 15)',
-             'Época', 'Acc')
-    style_ax(axes[2],
-             r'Energía supercoerciva $\mathcal{E}/N_{params}$ vs época'
-             f'  (recortado a {REG_CLIP})\n'
-             r'pSGLD: se estabiliza en nivel no nulo (explora $\nu^*$, no converge a $J^*$)',
-             'Época', r'$\mathcal{E}$')
-
-    axes[0].set_ylim(0, J_CLIP)
-    axes[1].set_ylim(0.45, 1.05)
-    axes[2].set_ylim(0, REG_CLIP)
-    for ax in axes:
-        ax.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=8)
-    fig.suptitle('Efecto de ε en la convergencia del Mean-Field ResNet',
-                 color=TXT, fontsize=13)
-    plt.tight_layout()
-    out = os.path.join(OUTPUT_DIR, 'B1_convergence_curves.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
-
-    # ── B2: Fronteras de decisión + campo de velocidad (2 filas) ────────────
-    xv = np.linspace(-2.5, 2.5, 16)
-    Xg, Yg = np.meshgrid(xv, xv)
-    grid_v  = torch.tensor(
-        np.c_[Xg.ravel(), Yg.ravel()].astype(np.float32), device=DEVICE
-    )
-
-    fig, axes = plt.subplots(2, n_eps, figsize=(5 * n_eps, 10))
-    fig.patch.set_facecolor(DARK_BG)
-
-    for col, (eps, res) in enumerate(results.items()):
-        # Fila 0: fronteras de decisión
-        acc = res['hist']['accuracy'][-1]
-        plot_decision_boundary(axes[0, col], res['model'], X_np, y_np,
-                               f'ε={eps}   acc={acc:.3f}')
-
-        # Fila 1: campo de velocidad F(x, t=0.5)
-        ax = axes[1, col]
-        m  = res['model']
-        m.eval()
-        with torch.no_grad():
-            vel = m.velocity(0.5, grid_v).cpu().numpy()
-        U     = vel[:, 0].reshape(Xg.shape)
-        V     = vel[:, 1].reshape(Xg.shape)
-        speed = np.hypot(U, V)
-        q     = ax.quiver(Xg, Yg, U / (speed + 1e-8), V / (speed + 1e-8),
-                          speed, cmap='plasma', alpha=0.85,
-                          scale=18, width=0.004)
-        plt.colorbar(q, ax=ax, fraction=0.046, pad=0.04)
-        ax.scatter(X_np[y_np == 0, 0], X_np[y_np == 0, 1],
-                   c='#ff6b6b', s=10, alpha=0.45, zorder=4)
-        ax.scatter(X_np[y_np == 1, 0], X_np[y_np == 1, 1],
-                   c='#74b9ff', s=10, alpha=0.45, zorder=4)
-        style_ax(ax, f'$F(x,t=0.5)$  ε={eps}', '$x_1$', '$x_2$')
-        ax.set_aspect('equal')
-
-    fig.suptitle(
-        r'Fronteras de decisión y campo de velocidad  —  Mean-Field ODE  (make\_moons)'
-        '\n'
-        r'Fila superior: frontera en $\mathbb{R}^2$  |  '
-        r'Fila inferior: $F(x,t=0.5)$, dirección normalizada, color = magnitud',
-        color=TXT, fontsize=12
-    )
-    plt.tight_layout()
-    out = os.path.join(OUTPUT_DIR, 'B2_decision_boundaries.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"  → {out}")
-
+    # ── Datos de las figuras B1 y B2 ─────────────────────────────────────────
+    # B2 usa la misma ventana [−2.5, 2.5]² para la frontera y para F(x, 0.5).
+    hists = [results[eps]['hist'] for eps in epsilons]
+    probs, U, V = [], [], []
+    for eps in epsilons:
+        m = results[eps]['model']
+        gx, gy, P = decision_grid(m, bounds=(-2.5, 2.5, -2.5, 2.5))
+        qx, qy, u, v = velocity_grid(m, t=0.5, lim=2.5, n=16)
+        probs.append(P)
+        U.append(u)
+        V.append(v)
+    publish('B', dict(
+        eps=np.array(epsilons, dtype=float),
+        loss=[h['loss'] for h in hists], acc=[h['accuracy'] for h in hists],
+        reg=[h['loss_reg'] for h in hists],
+        J_star=[h['J_star'] for h in hists], mu=[results[e]['mu'] for e in epsilons],
+        final_acc=[h['accuracy'][-1] for h in hists],
+        X=X_np, y=y_np, grid_x=gx, grid_y=gy, grid_p=np.stack(probs),
+        qx=qx, qy=qy, U=np.stack(U), V=np.stack(V),
+    ))
     return results

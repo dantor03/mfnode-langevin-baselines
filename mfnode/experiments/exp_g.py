@@ -39,33 +39,30 @@ MÉTRICAS:
     - acc_train / acc_test : accuracy sobre entrenamiento y oráculo.
     - Gap       : BCE_test − BCE_train (gap de generalización).
 
-FIGURAS (G_convergence_problem.png):
-    G1 — BCE_train y BCE_test vs N (escala log en X).
-         Banda ±1σ sobre semillas.  Rojo = ε=0, azul = ε=0.01.
-         Línea continua = BCE_test, discontinua = BCE_train.
-         Se espera que ambas converjan y que el gap se cierre con N.
-
-    G2 — Gap de generalización (BCE_test − BCE_train) vs N.
-         Si ε > 0 acelera la convergencia, la curva azul debe caer
-         más rápido que la roja (o llegar a un gap menor para N pequeño).
+FIGURAS (G_convergence_problem.png, datos en figures/data/G.npz):
+    G1 — BCE_train (discontinua) y BCE_test (continua) frente a N, media ± sd
+         sobre semillas.  Se espera que ambas converjan y que el gap se cierre.
+    G2 — Gap BCE_test − BCE_train frente a N ≥ 100 en log-log, con el ajuste
+         gap ∝ N^α de cada ε y la referencia N^{-1/2}.
 """
 
 import os
 
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 from sklearn.datasets import make_moons
 from sklearn.preprocessing import StandardScaler
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, style_ax
+from ..config import DEVICE, OUTPUT_DIR
 from ..model import MeanFieldResNet
 from ..train import train
+from ..plotting import publish
 
 
-def _save_results_G(results, epsilons, n_values, path):
+def _save_results_G(results, epsilons, n_values, path, n_epochs):
     """Serializa el dict results a .npz para poder reanudar o regenerar la figura."""
-    save_dict = {'EPSILONS': np.array(epsilons), 'N_VALUES': np.array(n_values)}
+    save_dict = {'EPSILONS': np.array(epsilons), 'N_VALUES': np.array(n_values),
+                 'n_epochs': np.array(n_epochs)}
     for ei, eps in enumerate(epsilons):
         for ni, N in enumerate(n_values):
             r = results[eps][N]
@@ -74,11 +71,14 @@ def _save_results_G(results, epsilons, n_values, path):
     np.savez(path, **save_dict)
 
 
-def _load_results_G(path, epsilons, n_values):
-    """Carga results desde .npz.  Devuelve None si el archivo no existe."""
+def _load_results_G(path, epsilons, n_values, n_epochs):
+    """Carga results desde .npz.  Devuelve None si no existe o es de otro n_epochs."""
     if not os.path.exists(path):
         return None
     data = np.load(path)
+    if 'n_epochs' in data and int(data['n_epochs']) != n_epochs:
+        print(f"  ✗ {path} es de {int(data['n_epochs'])} épocas, no de {n_epochs}: se ignora")
+        return None
     results = {
         eps: {N: {'BCE_train': [], 'J_star_train': [], 'BCE_test': [],
                   'acc_train': [], 'acc_test': []}
@@ -111,8 +111,7 @@ def experiment_G(n_seeds: int = 5, n_epochs: int = 700):
     EPSILONS = [0.0, 0.01]
     N_TEST   = 10_000
     SEEDS    = list(range(n_seeds))
-    RESULTS_FILE = os.path.join(os.path.dirname(__file__),
-                                '..', '..', 'figures', 'G_results.npz')
+    RESULTS_FILE = os.path.join(OUTPUT_DIR, 'G_results.npz')
 
     # ── Oráculo de test ───────────────────────────────────────────────────────
     # Se usa seed=999 para evitar solapamiento con las semillas de entrenamiento.
@@ -131,7 +130,7 @@ def experiment_G(n_seeds: int = 5, n_epochs: int = 700):
     # ── Carga de resultados previos (reanudación) ─────────────────────────────
     # Si existe G_results.npz de una ejecución anterior (o parcial en Colab),
     # se cargan los resultados ya calculados y se saltan esas combinaciones.
-    results = _load_results_G(RESULTS_FILE, EPSILONS, N_VALUES)
+    results = _load_results_G(RESULTS_FILE, EPSILONS, N_VALUES, n_epochs)
     if results is None:
         results = {
             eps: {
@@ -205,124 +204,29 @@ def experiment_G(n_seeds: int = 5, n_epochs: int = 700):
                   f"acc_test={np.mean(r['acc_test']):.3f}")
             # Guardado incremental: si Colab se corta, los resultados hasta aquí
             # están en G_results.npz y se pueden reanudar en la siguiente sesión.
-            _save_results_G(results, EPSILONS, N_VALUES, RESULTS_FILE)
+            _save_results_G(results, EPSILONS, N_VALUES, RESULTS_FILE, n_epochs)
             print("      → checkpoint guardado en G_results.npz")
 
-    # ── Figura G ──────────────────────────────────────────────────────────────
-    COLOR = {0.0: '#e74c3c', 0.01: '#3498db'}
-    Ns    = np.array(N_VALUES)
+    # ── Datos de la figura ───────────────────────────────────────────────────
+    def _metric(name):
+        """(n_eps, n_N, n_seeds); un caché con más semillas se recorta a n_seeds."""
+        return np.array([[results[e][N][name][:n_seeds] for N in N_VALUES]
+                         for e in EPSILONS])
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.patch.set_facecolor(DARK_BG)
-    ax1, ax2, ax3 = axes
+    data = dict(N=np.array(N_VALUES), eps=np.array(EPSILONS, dtype=float),
+                n_epochs=n_epochs, n_test=N_TEST,
+                bce_train=_metric('BCE_train'), bce_test=_metric('BCE_test'),
+                J_star_train=_metric('J_star_train'),
+                acc_train=_metric('acc_train'), acc_test=_metric('acc_test'))
 
-    rate_info = {}   # para imprimir en consola
-
-    for eps in EPSILONS:
-        col   = COLOR[eps]
-        label = f'ε={eps}'
-
-        bt_mean = np.array([np.mean(results[eps][N]['BCE_train']) for N in N_VALUES])
-        bt_std  = np.array([np.std( results[eps][N]['BCE_train']) for N in N_VALUES])
-        te_mean = np.array([np.mean(results[eps][N]['BCE_test'])  for N in N_VALUES])
-        te_std  = np.array([np.std( results[eps][N]['BCE_test'])  for N in N_VALUES])
-        gap     = te_mean - bt_mean
-        gap_std = np.sqrt(bt_std**2 + te_std**2)
-
-        # ── G1: BCE_train y BCE_test vs N ─────────────────────────────────
-        ax1.plot(Ns, te_mean, color=col, lw=2.2, ls='-',
-                 label=f'{label}  BCE$_{{test}}$')
-        ax1.fill_between(Ns, np.maximum(te_mean - te_std, 0),
-                         te_mean + te_std, color=col, alpha=0.18)
-        ax1.plot(Ns, bt_mean, color=col, lw=1.5, ls='--',
-                 label=f'{label}  BCE$_{{train}}$')
-        ax1.fill_between(Ns, np.maximum(bt_mean - bt_std, 0),
-                         bt_mean + bt_std, color=col, alpha=0.10)
-
-        # ── G2: gap de generalización vs N (escala lineal, sin N=50) ──────
-        # Excluye N=50 cuya varianza domina el eje y oscurece la tendencia
-        mask  = Ns >= 100
-        ax2.plot(Ns[mask], gap[mask], color=col, lw=2.2, label=label)
-        ax2.fill_between(Ns[mask],
-                         np.maximum(gap[mask] - gap_std[mask], 0),
-                         gap[mask] + gap_std[mask],
-                         color=col, alpha=0.20)
-
-        # ── G3: log-log del gap → tasa de convergencia N^{-α} ────────────
-        # Ajuste lineal en log-log: log(gap) = -α·log(N) + c
-        # Se usa N ≥ 100 para evitar el régimen de N muy pequeño (ruidoso).
-        log_N   = np.log(Ns[mask])
-        log_gap = np.log(np.maximum(gap[mask], 1e-6))
-        alpha, intercept = np.polyfit(log_N, log_gap, 1)
-        N_fit   = np.logspace(np.log10(100), np.log10(3200), 50)
-        gap_fit = np.exp(intercept) * N_fit ** alpha
-        rate_info[eps] = alpha
-
-        ax3.scatter(Ns[mask], gap[mask], color=col, s=40, zorder=5)
-        ax3.plot(N_fit, gap_fit, color=col, lw=2.0,
-                 label=rf'{label}  $\alpha={-alpha:.2f}$  (gap $\propto N^{{{alpha:.2f}}}$)')
-        ax3.fill_between(Ns[mask],
-                         np.maximum(gap[mask] - gap_std[mask], 1e-6),
-                         gap[mask] + gap_std[mask],
-                         color=col, alpha=0.18)
-
-    # Referencia teórica 1/√N en G3
-    N_ref  = np.logspace(np.log10(100), np.log10(3200), 50)
-    # Escalar la referencia para que pase por el gap medio de ε=0 en N=100
-    ref_scale = np.mean(results[0.0][100]['BCE_test']) - \
-                np.mean(results[0.0][100]['BCE_train'])
-    ax3.plot(N_ref, ref_scale * (100 / N_ref) ** 0.5,
-             color='white', lw=1.2, ls=':', alpha=0.5,
-             label=r'$\propto N^{-0.5}$ (referencia clásica)')
-
-    # Formato ejes
-    for ax in (ax1, ax2):
-        ax.set_xscale('log')
-        ax.set_xticks(N_VALUES)
-        ax.set_xticklabels([str(n) for n in N_VALUES])
-
-    ax3.set_xscale('log')
-    ax3.set_yscale('log')
-    ax3.set_xticks([100, 200, 400, 800, 1600, 3200])
-    ax3.set_xticklabels(['100', '200', '400', '800', '1600', '3200'])
-
-    style_ax(ax1,
-             'G1 — Convergencia de la pérdida con $N$\n'
-             r'Continua = BCE$_{test}$  |  Discontinua = BCE$_{train}$',
-             '$N$', 'BCE')
-    ax1.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7)
-
-    style_ax(ax2,
-             r'G2 — Gap de generalización  (BCE$_{test}$ $-$ BCE$_{train}$)'
-             '\n'
-             r'$N \geq 100$  (sin $N=50$: demasiada varianza)',
-             '$N$', 'Gap')
-    ax2.axhline(0, color='white', lw=0.8, ls=':', alpha=0.4)
-    ax2.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7)
-
-    style_ax(ax3,
-             r'G3 — Tasa de convergencia del gap  (log-log)'
-             '\n'
-             r'Ajuste gap $\propto N^{-\alpha}$  |  $\alpha$ estimado por regresión lineal',
-             '$N$', 'Gap (log)')
-    ax3.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7)
-
-    fig.suptitle(
-        r'Experimento G — Convergence Problem: BCE$_{test}(N) \to$ BCE$_\infty$  '
-        r'($N \to \infty$)'
-        '\n'
-        rf'Banda = $\pm 1\sigma$ sobre {n_seeds} semillas  |  '
-        r'$N_\mathrm{test} = 10\,000$ (oráculo make\_moons, seed=999)',
-        color=TXT, fontsize=11
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.90])
-    out = os.path.join(OUTPUT_DIR, 'G_convergence_problem.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-
+    # Tasa del gap: ajuste lineal log(gap) = α·log(N) + c con N ≥ 100
+    Ns   = np.array(N_VALUES, dtype=float)
+    mask = Ns >= 100
     print("\n  Tasas de convergencia estimadas (gap ∝ N^α, ajuste N≥100):")
-    for eps, alpha in rate_info.items():
+    for k, eps in enumerate(EPSILONS):
+        gap = data['bce_test'][k].mean(1) - data['bce_train'][k].mean(1)
+        alpha, _ = np.polyfit(np.log(Ns[mask]), np.log(np.maximum(gap[mask], 1e-6)), 1)
         print(f"    ε={eps}: α = {alpha:.3f}  (gap ∝ N^{{{alpha:.2f}}})")
-    print(f"\n  → {out}")
 
+    publish('G', data)
     return results

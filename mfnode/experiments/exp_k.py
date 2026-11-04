@@ -26,37 +26,23 @@ PROTOCOLO:
         3. Registrar MSE_train, MSE_test, R²_train, R²_test
         4. Calcular fracción de regularización: ε·reg / MSE_train
 
-FIGURAS (K_epsilon_sweep.png):
-    K1 — R²_test vs ε (log)  — curva principal por método
-    K2 — R²_train vs ε       — para detectar overfitting
-    K3 — Fracción de regularización (ε·reg/MSE) vs ε
-         muestra en qué ε el regularizador pasa a ser relevante
-    K4 — Comparación final al ε óptimo por método y al ε óptimo compartido
+FIGURA (K_epsilon_sweep.png, datos en figures/data/K.npz), 1×3:
+    K1 — R²_test frente a ε (log); los valores fuera de escala se imprimen
+    K2 — peso del regularizador ε·reg / MSE frente a ε
+    K3 — R²_test con ε = 0.01 (el de J), con el mejor ε común y con el mejor
+         ε de cada método.  R²_train y los MSE quedan en K.npz.
 """
 
-import os
 
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, style_ax
+from ..config import DEVICE
 from ..data import get_california_regression
 from ..model import MeanFieldResNet
 from ..train import train
 from ..metrics import sample_prior_langevin
-
-C_PSGLD    = '#3498db'
-C_MMD      = '#e67e22'
-C_SINKHORN = '#2ecc71'
-
-STYLE = {
-    'pSGLD':    (C_PSGLD,    'o', '-'),
-    'MMD':      (C_MMD,      's', '-'),
-    'Sinkhorn': (C_SINKHORN, '^', '-'),
-}
-
+from ..plotting import publish
 
 def _r2(y_true, y_pred):
     ss_res = ((y_true - y_pred) ** 2).sum()
@@ -173,120 +159,20 @@ def experiment_K(epsilon_grid=None, n_epochs=500, n_prior=1_000,
         print(f"    {name:<10}  R²_te={r['r2_te']:.3f}  MSE_te={r['mse_te']:.4f}"
               f"  reg_frac={r['reg_frac']:.3f}")
 
-    # ── 5. Figuras ──────────────────────────────────────────────────────────
-    eps_arr = np.array(epsilon_grid)
+    # ── 5. Datos de la figura ──────────────────────────────────────────────
+    names = ['pSGLD', 'MMD', 'Sinkhorn']
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.patch.set_facecolor(DARK_BG)
-    (ax1, ax2), (ax3, ax4) = axes
+    def _grid(key):
+        return [[results[n][e][key] for e in epsilon_grid] for n in names]
 
-    for ax in axes.ravel():
-        ax.set_facecolor(PANEL_BG)
-
-    # ── K1: R²_test vs ε ────────────────────────────────────────────────────
-    for name, (col, mk, ls) in STYLE.items():
-        y_vals = [results[name][e]['r2_te'] for e in epsilon_grid]
-        ax1.plot(eps_arr, y_vals, color=col, lw=2.2, ls=ls,
-                 marker=mk, markersize=7, label=name)
-        # Marcar ε óptimo
-        be = best_eps[name]
-        ax1.axvline(be, color=col, lw=0.8, ls=':', alpha=0.5)
-    ax1.axvline(best_shared, color='white', lw=1.2, ls='--', alpha=0.6,
-                label=f'ε compartido óptimo ({best_shared})')
-    ax1.set_xscale('log')
-    style_ax(ax1, r'K1 — $R^2_{test}$ vs $\varepsilon$'
-             '\nPunto = ε óptimo por método  |  Blanco = ε compartido',
-             r'$\varepsilon$', r'$R^2_{test}$')
-    ax1.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=8)
-
-    # ── K2: R²_train vs ε ───────────────────────────────────────────────────
-    for name, (col, mk, ls) in STYLE.items():
-        y_tr_vals = [results[name][e]['r2_tr'] for e in epsilon_grid]
-        y_te_vals = [results[name][e]['r2_te'] for e in epsilon_grid]
-        ax2.plot(eps_arr, y_tr_vals, color=col, lw=2.0, ls='--',
-                 marker=mk, markersize=6, alpha=0.8, label=f'{name} train')
-        ax2.plot(eps_arr, y_te_vals, color=col, lw=2.0, ls='-',
-                 marker=mk, markersize=6, label=f'{name} test')
-    ax2.set_xscale('log')
-    style_ax(ax2, r'K2 — $R^2$ train (--) vs test (—)'
-             '\nBrecha grande = overfitting',
-             r'$\varepsilon$', r'$R^2$')
-    ax2.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7, ncol=2)
-
-    # ── K3: Fracción de regularización vs ε ─────────────────────────────────
-    for name, (col, mk, ls) in STYLE.items():
-        fracs = [results[name][e]['reg_frac'] for e in epsilon_grid]
-        ax3.plot(eps_arr, fracs, color=col, lw=2.0, ls=ls,
-                 marker=mk, markersize=7, label=name)
-    ax3.axhline(1.0, color='white', lw=1.0, ls=':', alpha=0.5,
-                label='reg = 100% MSE')
-    ax3.axhline(0.1, color='white', lw=0.8, ls=':', alpha=0.3,
-                label='reg = 10% MSE')
-    ax3.set_xscale('log')
-    ax3.set_yscale('log')
-    style_ax(ax3,
-             r'K3 — Fracción de regularización: $\varepsilon \cdot \mathrm{reg} / \mathrm{MSE_{train}}$'
-             '\nEn clasificación era ~3  |  Con ε=0.01 en regresión era ~0.003',
-             r'$\varepsilon$', r'$\varepsilon \cdot \mathrm{reg} / \mathrm{MSE}$')
-    ax3.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7.5)
-
-    # ── K4: Comparación al ε óptimo compartido ───────────────────────────────
-    names   = ['pSGLD', 'MMD', 'Sinkhorn']
-    cols    = [C_PSGLD, C_MMD, C_SINKHORN]
-    x_pos   = np.arange(len(names))
-
-    r2_best = [results[n][best_eps[n]]['r2_te']     for n in names]
-    r2_shar = [results[n][best_shared]['r2_te']     for n in names]
-    r2_orig = [results[n][0.01]['r2_te']            for n in names]
-
-    w = 0.26
-    ax4.bar(x_pos - w,   r2_orig, w, color=cols, alpha=0.40, hatch='//',
-            edgecolor='white', linewidth=0.5)
-    ax4.bar(x_pos,       r2_shar, w, color=cols, alpha=0.70)
-    ax4.bar(x_pos + w,   r2_best, w, color=cols, alpha=1.00)
-
-    for i, (n, c) in enumerate(zip(names, cols)):
-        for j, (val, offset) in enumerate([
-            (r2_orig[i], -w), (r2_shar[i], 0), (r2_best[i], w)
-        ]):
-            ax4.text(i + offset, val + 0.005, f'{val:.3f}',
-                     ha='center', va='bottom', color=TXT, fontsize=7.5)
-
-    ax4.set_xticks(x_pos)
-    ax4.set_xticklabels(names, fontsize=10)
-    handles = [
-        mlines.Line2D([], [], color='gray',  lw=0, marker='s', markersize=9,
-                      markerfacecolor='gray', alpha=0.40,
-                      label='ε=0.01 (exp J)'),
-        mlines.Line2D([], [], color='gray',  lw=0, marker='s', markersize=9,
-                      markerfacecolor='gray', alpha=0.70,
-                      label=f'ε={best_shared} (compartido óptimo)'),
-        mlines.Line2D([], [], color='gray',  lw=0, marker='s', markersize=9,
-                      markerfacecolor='gray', alpha=1.00,
-                      label='ε óptimo por método'),
-    ]
-    style_ax(ax4,
-             r'K4 — $R^2_{test}$ comparado: ε original vs óptimo'
-             '\n¿Cambia el ranking con el ε correcto?',
-             '', r'$R^2_{test}$')
-    ax4.legend(handles=handles, facecolor=PANEL_BG, labelcolor=TXT, fontsize=8)
-    ax4.set_ylim(bottom=max(0, min(r2_orig) - 0.05))
-
-    fig.suptitle(
-        r'Experimento K — Barrido de $\varepsilon$: California Housing PCA(2)'
-        '\n'
-        rf'¿Es la inferioridad de pSGLD en exp_J un artefacto de $\varepsilon=0.01$?'
-        '\n'
-        rf'{n_epochs} epochs  |  {n_prior} prior samples por $\varepsilon$  '
-        rf'|  varianza explicada={ds["explained_var"]:.1%}',
-        color=TXT, fontsize=11, y=0.99
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.94])
-
-    out = os.path.join(OUTPUT_DIR, 'K_epsilon_sweep.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
+    publish('K', dict(
+        eps_grid=np.array(epsilon_grid, dtype=float), n_epochs=n_epochs,
+        r2_te=_grid('r2_te'), r2_tr=_grid('r2_tr'),
+        mse_te=_grid('mse_te'), mse_tr=_grid('mse_tr'),
+        reg_frac=_grid('reg_frac'), reg_final=_grid('reg_final'),
+        best_eps=[best_eps[n] for n in names], best_shared=best_shared, eps_orig=0.01,
+        explained_var=ds['explained_var'],
+    ))
 
     return {
         'results':      results,

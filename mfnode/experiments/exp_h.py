@@ -27,25 +27,20 @@ PROTOCOLO:
          MMD²(ν_N_final, ν^∞)   — partículas vs prior (directamente)
          W₁ por dimensión        — resolución fina por componente de a
 
-FIGURAS:
-    H1 — Histogramas marginales 1D (5 dimensiones: a₀₀, a₀₁, a₁₀, a₁₁, a₂)
-         Azul = ν̂* (tiempo-promedio) | Rojo tick = ν_N final | Gris = ν^∞ prior
-    H2 — MMD² global entre las tres distribuciones (barras)
-    H3 — W₁ por dimensión (barras agrupadas, tres comparaciones)
-    H4 — Scatter 2D en la proyección (a₀₀, a₀₁) con contornos KDE
+FIGURA (H_psgld_diagnostic.png, datos en figures/data/H.npz):
+    Fila 1 — marginales de las 5 coordenadas: prior ν^∞ analítico (discontinua),
+             KDE de ν̂* y las M partículas finales (marcas).
+    Fila 2 — MMD² entre las tres distribuciones y W₁ por coordenada, con el
+             mismo color para cada comparación.
 """
 
-import os
 
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
-from scipy.stats import gaussian_kde
 from sklearn.datasets import make_moons
 from sklearn.preprocessing import StandardScaler
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, style_ax
+from ..config import DEVICE
 from ..model import MeanFieldResNet
 from ..train import train
 from ..metrics import (
@@ -55,6 +50,7 @@ from ..metrics import (
     sample_prior_langevin,
     collect_psgld_snapshots,
 )
+from ..plotting import publish
 
 # ── Etiquetas para las 5 dimensiones del espacio A ──────────────────────────
 DIM_LABELS = [
@@ -64,25 +60,6 @@ DIM_LABELS = [
     r'$a_1^{(1)}$',   # W1.weight[m, 1]  — componente 1 de a₁^m
     r'$a_2$',         # W1.bias[m]        — umbral (bias) de neurona m
 ]
-
-# ── Colores ──────────────────────────────────────────────────────────────────
-C_TIMEAVG = '#3498db'   # azul  — ν̂* tiempo-promedio (referencia empírica de ν*)
-C_FINAL   = '#e74c3c'   # rojo  — ν_N final (64 partículas al acabar training)
-C_PRIOR   = '#95a5a6'   # gris  — ν^∞ prior analítico
-
-
-def _prior_density_1d(theta, c1=0.05, c2=0.5):
-    """
-    Densidad marginal no normalizada del prior ν^∞ ∝ exp(−ℓ(a)),
-    evaluada en una dimensión con las demás integradas.
-
-    Como ℓ(a) = Σⱼ (c₁aⱼ⁴ + c₂aⱼ²), las dimensiones son independientes bajo
-    el prior, y la marginal 1D es también:
-        p(θ) ∝ exp(−(c₁θ⁴ + c₂θ²))
-    El prior no depende de ε; ε solo escala el peso del término KL en la pérdida.
-    """
-    return np.exp(-(c1 * theta ** 4 + c2 * theta ** 2))
-
 
 def experiment_H(n_epochs=800, n_snapshot_steps=2_000, thin=10,
                  n_prior_samples=8_000, epsilon=0.01):
@@ -167,165 +144,14 @@ def experiment_H(n_epochs=800, n_snapshot_steps=2_000, thin=10,
         print(f"  {DIM_LABELS[d]:<6} "
               f"{w1_fn_ta[d]:>12.4f} {w1_ta_pr[d]:>12.4f} {w1_fn_pr[d]:>12.4f}")
 
-    # ── 6. Figuras ─────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(22, 15))
-    fig.patch.set_facecolor(DARK_BG)
-    gs  = fig.add_gridspec(3, 5, hspace=0.50, wspace=0.38)
-
-    theta_grid = np.linspace(-3.5, 3.5, 500)
-
-    # ── H1: Histogramas marginales ─────────────────────────────────────────
-    for d in range(5):
-        ax = fig.add_subplot(gs[0, d])
-        ax.set_facecolor(PANEL_BG)
-
-        # Prior analítico normalizado
-        pv   = _prior_density_1d(theta_grid)
-        pv  /= np.trapz(pv, theta_grid)
-        ax.plot(theta_grid, pv, color=C_PRIOR, lw=1.6, ls='--',
-                alpha=0.85, label=r'$\nu^\infty$ prior')
-
-        # ν̂* tiempo-promedio (KDE de Gaussian con ancho Scott)
-        ta_dim = particles_timeavg[:, d].numpy()
-        try:
-            kde_ta = gaussian_kde(ta_dim, bw_method='scott')
-            ax.fill_between(theta_grid, kde_ta(theta_grid),
-                            alpha=0.30, color=C_TIMEAVG)
-            ax.plot(theta_grid, kde_ta(theta_grid), color=C_TIMEAVG,
-                    lw=1.8, label=r'$\hat\nu^*$ (t-avg)')
-        except Exception:
-            pass
-
-        # ν_N final — rug plot (64 puntos)
-        fn_dim = pf[:, d].numpy()
-        yrug   = -0.012 * pv.max()
-        ax.plot(fn_dim, np.full(len(fn_dim), yrug), '|',
-                color=C_FINAL, alpha=0.9, markersize=9,
-                label=r'$\nu_N$ final')
-
-        style_ax(ax, DIM_LABELS[d], '', 'densidad' if d == 0 else '')
-        ax.tick_params(labelsize=6.5)
-        if d == 2:
-            ax.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=6.5,
-                      loc='upper right')
-
-    # ── H2: MMD² global ────────────────────────────────────────────────────
-    ax_mmd = fig.add_subplot(gs[1, :2])
-    ax_mmd.set_facecolor(PANEL_BG)
-    labels_mmd = [r'$\nu_N$ vs $\hat\nu^*$',
-                  r'$\hat\nu^*$ vs $\nu^\infty$',
-                  r'$\nu_N$ vs $\nu^\infty$']
-    vals_mmd   = [mmd_fn_ta, mmd_ta_pr, mmd_fn_pr]
-    cols_mmd   = [C_FINAL, C_TIMEAVG, C_PRIOR]
-    bars = ax_mmd.bar(labels_mmd, [max(v, 0) for v in vals_mmd],
-                      color=cols_mmd, alpha=0.80, width=0.5, zorder=3)
-    y_scale = max(abs(v) for v in vals_mmd)
-    for bar, v in zip(bars, vals_mmd):
-        ax_mmd.text(bar.get_x() + bar.get_width() / 2,
-                    max(v, 0) + y_scale * 0.03,
-                    f'{v:.2e}', ha='center', va='bottom',
-                    color=TXT, fontsize=8)
-    style_ax(ax_mmd,
-             r'H2 — MMD² global'
-             '\n'
-             r'Rojo $\ll$ azul/gris → $\nu_N \approx \hat\nu^* \neq \nu^\infty$',
-             '', 'MMD²')
-    ax_mmd.tick_params(axis='x', labelsize=8.5)
-    ax_mmd.set_ylim(bottom=0)
-
-    # ── H3: W₁ por dimensión ───────────────────────────────────────────────
-    ax_w1 = fig.add_subplot(gs[1, 2:])
-    ax_w1.set_facecolor(PANEL_BG)
-    x_pos = np.arange(5)
-    w = 0.26
-    ax_w1.bar(x_pos - w, w1_fn_ta, w, color=C_FINAL,   alpha=0.80,
-              label=r'$\nu_N$ vs $\hat\nu^*$',   zorder=3)
-    ax_w1.bar(x_pos,     w1_ta_pr, w, color=C_TIMEAVG, alpha=0.80,
-              label=r'$\hat\nu^*$ vs $\nu^\infty$', zorder=3)
-    ax_w1.bar(x_pos + w, w1_fn_pr, w, color=C_PRIOR,   alpha=0.80,
-              label=r'$\nu_N$ vs $\nu^\infty$',   zorder=3)
-    ax_w1.set_xticks(x_pos)
-    ax_w1.set_xticklabels(DIM_LABELS, fontsize=8.5)
-    style_ax(ax_w1,
-             r'H3 — $W_1$ por dimensión de parámetro'
-             '\n'
-             r'Rojo $\ll$ azul/gris → partículas finales ≈ estacionario ≠ prior',
-             '', r'$W_1$')
-    ax_w1.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7.5, loc='upper right')
-
-    # ── H4: Scatter 2D (a₀₀, a₀₁) ────────────────────────────────────────
-    ax_2d = fig.add_subplot(gs[2, :])
-    ax_2d.set_facecolor(PANEL_BG)
-
-    pr_2d = prior_samples[:, :2].numpy()
-    ta_2d = particles_timeavg[:, :2].numpy()
-    fn_2d = pf[:, :2].numpy()
-
-    # Rango común para el grid de KDE
-    all_2d = np.vstack([pr_2d, ta_2d, fn_2d])
-    pad    = 0.4
-    x_lo, x_hi = all_2d[:, 0].min() - pad, all_2d[:, 0].max() + pad
-    y_lo, y_hi = all_2d[:, 1].min() - pad, all_2d[:, 1].max() + pad
-    xx, yy = np.mgrid[x_lo:x_hi:100j, y_lo:y_hi:100j]
-    pos    = np.vstack([xx.ravel(), yy.ravel()])
-
-    # KDE del prior 2D
-    try:
-        kde_pr = gaussian_kde(pr_2d.T)
-        z_pr   = kde_pr(pos).reshape(xx.shape)
-        ax_2d.contourf(xx, yy, z_pr, levels=7, cmap='Greys',  alpha=0.35)
-        ax_2d.contour( xx, yy, z_pr, levels=7, colors=[C_PRIOR],
-                       linewidths=0.9, alpha=0.75)
-    except Exception:
-        pass
-
-    # KDE de ν̂* 2D (sub-muestreado para velocidad)
-    try:
-        idx_ta2d = np.random.choice(len(ta_2d), size=min(3000, len(ta_2d)),
-                                    replace=False)
-        kde_ta = gaussian_kde(ta_2d[idx_ta2d].T)
-        z_ta   = kde_ta(pos).reshape(xx.shape)
-        ax_2d.contourf(xx, yy, z_ta, levels=7, cmap='Blues', alpha=0.30)
-        ax_2d.contour( xx, yy, z_ta, levels=7, colors=[C_TIMEAVG],
-                       linewidths=1.3)
-    except Exception:
-        pass
-
-    # Partículas finales como puntos
-    ax_2d.scatter(fn_2d[:, 0], fn_2d[:, 1],
-                  c=C_FINAL, s=45, zorder=6, alpha=0.90,
-                  edgecolors='white', linewidths=0.4)
-
-    legend_handles = [
-        mlines.Line2D([], [], color=C_PRIOR,   lw=2, ls='-',
-                      label=r'$\nu^\infty$ prior (ULA sin datos)'),
-        mlines.Line2D([], [], color=C_TIMEAVG, lw=2, ls='-',
-                      label=r'$\hat\nu^*$ t-avg (pSGLD continuado)'),
-        mlines.Line2D([], [], color=C_FINAL, lw=0, marker='o', markersize=7,
-                      markerfacecolor=C_FINAL,
-                      label=r'$\nu_N$ final (64 partículas)'),
-    ]
-    style_ax(ax_2d,
-             r'H4 — Proyección 2D: $(a_0^{(0)},\ a_0^{(1)})$'
-             '\n'
-             r'Si $\nu^*$ ≠ $\nu^\infty$: la concentración azul no coincide con la gris',
-             r'$a_0^{(0)}$', r'$a_0^{(1)}$')
-    ax_2d.legend(handles=legend_handles, facecolor=PANEL_BG,
-                 labelcolor=TXT, fontsize=8.5)
-
-    fig.suptitle(
-        rf'Experimento H — Diagnóstico pSGLD: ¿muestrea de $\nu^*$?  ($\varepsilon={epsilon}$)'
-        '\n'
-        rf'$M=64$ partículas  |  {n_snapshot_steps} pasos post-convergencia (thin={thin})'
-        rf'  |  {n_prior_samples} muestras $\nu^\infty$ por ULA',
-        color=TXT, fontsize=11, y=0.99
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-    out = os.path.join(OUTPUT_DIR, 'H_psgld_diagnostic.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
+    # ── 6. Datos de la figura ──────────────────────────────────────────────
+    # Orden de las comparaciones: [ν_N vs ν̂*, ν̂* vs ν^∞, ν_N vs ν^∞]
+    publish('H', dict(
+        eps=epsilon, n_epochs=n_epochs, n_snapshot_steps=n_snapshot_steps, thin=thin,
+        final=pf, timeavg=particles_timeavg, prior=prior_samples,
+        mmd=[mmd_fn_ta, mmd_ta_pr, mmd_fn_pr],
+        w1=[w1_fn_ta, w1_ta_pr, w1_fn_pr],
+    ))
 
     return {
         'particles_final':    particles_final,

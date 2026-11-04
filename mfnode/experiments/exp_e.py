@@ -4,15 +4,14 @@ exp_e.py — Experimento E (robustez): Robustez de la distribución ν*
 =============================================================================
 """
 
-import os
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, style_ax
+from ..config import DEVICE
 from ..data import get_moons
 from ..model import MeanFieldResNet
 from ..train import train
+from ..plotting import publish
 
 
 def experiment_E_robustness(n_seeds: int = 10, n_epochs: int = 500):
@@ -41,12 +40,9 @@ def experiment_E_robustness(n_seeds: int = 10, n_epochs: int = 500):
         al mínimo; el ruido permite explorar la distribución de Gibbs
         ν_t* ∝ exp(−J(θ)/ε) alrededor de él.
 
-    FIGURA E (E_parameter_robustness.png):
-        Layout 1×2 (dos paneles en columnas):
-          Panel izquierdo (E-1): importancias ‖a₀ᵐ‖ ordenadas — init variable, datos fijos
-          Panel derecho  (E-2): importancias ‖a₀ᵐ‖ ordenadas — datos variables, init fija
-        Cada curva de color corresponde a un run (seed distinta).
-        La línea blanca es la media y la banda blanca es ±1σ sobre las 10 seeds.
+    FIGURA E (E_parameter_robustness.png, datos en figures/data/E.npz), 1×2:
+        importancias ‖a₀ᵐ‖ ordenadas, una curva fina por semilla y la media en
+        negro: E-1 (init variable, datos fijos) y E-2 (datos variables, init fija).
     """
     print("\n" + "=" * 62)
     print("EXPERIMENTO E (robustez)  —  Robustez de ν* entre entrenamientos")
@@ -56,9 +52,6 @@ def experiment_E_robustness(n_seeds: int = 10, n_epochs: int = 500):
     DATA_SEED_FIXED = 42
     INIT_SEED_FIXED = 2   # seed 2 converge de forma limpia en make_moons (J*≈0.00015)
     SEEDS           = list(range(n_seeds))
-
-    SEED_COLORS = ['#e74c3c', '#f39c12', '#2ecc71', '#3498db', '#9b59b6',
-                   '#e67e22', '#1abc9c', '#e84393', '#a29bfe', '#fd79a8']
 
     def get_params(model):
         with torch.no_grad():
@@ -101,43 +94,16 @@ def experiment_E_robustness(n_seeds: int = 10, n_epochs: int = 500):
         print(f"    data_seed={s}: J*={hist['J_star']:.4f}, "
               f"acc={hist['accuracy'][-1]:.3f}")
 
-    # ── Figura E2 ─────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.patch.set_facecolor(DARK_BG)
+    # ── Datos de la figura ───────────────────────────────────────────────────
+    def _sorted_importance(results):
+        return np.stack([np.sort(importance(r['a0']))[::-1] for r in results])
 
-    def _panel(ax, results, subtitle):
-        """Dibuja importancias ‖a₀ᵐ‖ ordenadas por seed."""
-        for i, r in enumerate(results):
-            imp = np.sort(importance(r['a0']))[::-1]
-            # Only the first curve gets a legend label for individual seeds;
-            # the rest use '_nolegend_' to avoid cluttering the legend.
-            lbl = 'Seed individual' if i == 0 else '_nolegend_'
-            ax.plot(np.arange(1, len(imp) + 1), imp,
-                    color=SEED_COLORS[i % len(SEED_COLORS)],
-                    lw=1.2, alpha=0.70, label=lbl)
-        all_imp = np.array([np.sort(importance(r['a0']))[::-1] for r in results])
-        ax.plot(np.arange(1, all_imp.shape[1] + 1), all_imp.mean(axis=0),
-                color='white', lw=2.2, label='Media')
-        ax.fill_between(np.arange(1, all_imp.shape[1] + 1),
-                        all_imp.mean(axis=0) - all_imp.std(axis=0),
-                        all_imp.mean(axis=0) + all_imp.std(axis=0),
-                        color='white', alpha=0.15)
-        style_ax(ax,
-                 subtitle + '\n' r'Importancia $\|a_0^m\|_2$ ordenada por semilla',
-                 'Rank (neurona)', r'$\|a_0^m\|_2$')
-        ax.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=7)
-
-    _panel(axes[0], results_E2_1, f'E-1 — init variable, datos fijos (data_seed={DATA_SEED_FIXED})')
-    _panel(axes[1], results_E2_2, f'E-2 — datos variables, init fija (init_seed={INIT_SEED_FIXED})')
-
-    fig.suptitle(
-        r'Experimento E — Robustez de $\nu^*$: importancia neuronal $\|a_0^m\|_2$'
-        '\n'
-        r'Banda blanca = media ± std sobre 10 semillas  |  $\varepsilon=0.01$',
-        color=TXT, fontsize=11
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.90])
-    out = os.path.join(OUTPUT_DIR, 'E_parameter_robustness.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
+    publish('E', dict(
+        eps=EPS, data_seed=DATA_SEED_FIXED, init_seed=INIT_SEED_FIXED,
+        imp_e1=_sorted_importance(results_E2_1), imp_e2=_sorted_importance(results_E2_2),
+        a0_e1=[r['a0'] for r in results_E2_1], a1_e1=[r['a1'] for r in results_E2_1],
+        a0_e2=[r['a0'] for r in results_E2_2], a1_e2=[r['a1'] for r in results_E2_2],
+        J_star_e1=[r['hist']['J_star'] for r in results_E2_1],
+        J_star_e2=[r['hist']['J_star'] for r in results_E2_2],
+    ))
+    return results_E2_1, results_E2_2

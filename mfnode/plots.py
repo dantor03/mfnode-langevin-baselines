@@ -1,36 +1,49 @@
+"""Evaluate a trained model on grids, for the figures (the drawing is in ``plotting``)."""
+
 import numpy as np
 import torch
 
-from .config import DEVICE, style_ax
+from .config import DEVICE
 
 
-# =============================================================================
-# § 5  PLOTTING HELPERS
-# =============================================================================
-def plot_decision_boundary(ax, model, X_np, y_np, title=''):
+def decision_grid(model, X_np=None, pad=0.5, n=200, bounds=None):
     """
-    Plot the decision boundary P(y = 1 | x) = 0.5 in the original space ℝ².
+    P(y = 1 | x) of the full model (ODE + linear read-out) on a regular grid of ℝ².
 
-    Evaluates the full model (ODE + classifier) on a dense grid and colours each
-    point by the predicted probability; the white line is the level set
-    σ(logit) = 0.5, the classification boundary.  It reflects the JOINT action of
-      1. the ODE that maps X_0 → X_T (separating the classes in ℝ²), and
-      2. the linear classifier W·X_T + b on the transported features.
+    The 0.5 level set is the decision boundary in the original space.  It
+    reflects the joint action of the ODE, which maps X_0 to X_T, and of the
+    linear classifier W·X_T + b on the transported features.
+
+    Args:
+        model  : trained MeanFieldResNet (classification)
+        X_np   : data used to choose the window (ignored if ``bounds`` is given)
+        pad    : margin added around the data
+        n      : grid points per axis
+        bounds : optional (xmin, xmax, ymin, ymax)
+
+    Returns:
+        gx (n,), gy (n,), P (n, n) with P[i, j] evaluated at (gx[j], gy[i]).
     """
-    r = 0.5
-    xmin, xmax = X_np[:, 0].min() - r, X_np[:, 0].max() + r
-    ymin, ymax = X_np[:, 1].min() - r, X_np[:, 1].max() + r
-    xx, yy = np.meshgrid(np.linspace(xmin, xmax, 200),
-                         np.linspace(ymin, ymax, 200))
-    grid = torch.tensor(np.c_[xx.ravel(), yy.ravel()].astype(np.float32),
-                        device=DEVICE)
+    if bounds is None:
+        xmin, ymin = X_np.min(axis=0) - pad
+        xmax, ymax = X_np.max(axis=0) + pad
+    else:
+        xmin, xmax, ymin, ymax = bounds
+    gx, gy = np.linspace(xmin, xmax, n), np.linspace(ymin, ymax, n)
+    xx, yy = np.meshgrid(gx, gy)
+    grid = torch.tensor(np.c_[xx.ravel(), yy.ravel()].astype(np.float32), device=DEVICE)
     model.eval()
     with torch.no_grad():
-        Z = torch.sigmoid(model(grid)).cpu().numpy().reshape(xx.shape)
-    ax.contourf(xx, yy, Z, levels=50, cmap='RdBu_r', alpha=0.72, vmin=0, vmax=1)
-    ax.contour(xx, yy, Z, levels=[0.5], colors='white', linewidths=1.5)
-    ax.scatter(X_np[y_np == 0, 0], X_np[y_np == 0, 1],
-               c='#ff6b6b', s=14, alpha=0.85, zorder=3)
-    ax.scatter(X_np[y_np == 1, 0], X_np[y_np == 1, 1],
-               c='#74b9ff', s=14, alpha=0.85, zorder=3)
-    style_ax(ax, title, '$x_1$', '$x_2$')
+        P = torch.sigmoid(model(grid)).cpu().numpy().reshape(xx.shape)
+    return gx, gy, P
+
+
+def velocity_grid(model, t=0.5, lim=2.5, n=16):
+    """The velocity field F(x, t) on an n × n grid of [−lim, lim]²."""
+    v = np.linspace(-lim, lim, n)
+    qx, qy = np.meshgrid(v, v)
+    grid = torch.tensor(np.c_[qx.ravel(), qy.ravel()].astype(np.float32), device=DEVICE)
+    model.eval()
+    with torch.no_grad():
+        vel = model.velocity(t, grid).cpu().numpy()
+    return qx, qy, vel[:, 0].reshape(qx.shape), vel[:, 1].reshape(qx.shape)

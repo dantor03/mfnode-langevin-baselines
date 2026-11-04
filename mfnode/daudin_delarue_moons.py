@@ -16,19 +16,12 @@ Para ejecutar experimentos individuales usa el nuevo CLI:
 """
 
 # Re-exportar todos los símbolos públicos del paquete para compatibilidad
-from .config import (  # noqa: F401
-    SEED, DEVICE, OUTPUT_DIR,
-    DARK_BG, PANEL_BG, TXT, GRID_C, COLORS_EPS, style_ax,
-)
+from .config import SEED, DEVICE, OUTPUT_DIR            # noqa: F401
 from .data import get_moons, get_circles              # noqa: F401
 from .model import MeanFieldVelocity, MeanFieldResNet  # noqa: F401
 from .train import train, mu_pl_estimate              # noqa: F401
-from .plots import plot_decision_boundary             # noqa: F401
+from .plots import decision_grid, velocity_grid       # noqa: F401
 from .experiments import (                            # noqa: F401
     experiment_A, experiment_B, experiment_C,
     experiment_D, experiment_E_robustness, experiment_F,
 )
-from .main import main
-
-if __name__ == '__main__':
-    main()

@@ -4,16 +4,15 @@ exp_d.py — Experimento D: Genericidad del minimizador (Meta-Teorema 1)
 =============================================================================
 """
 
-import os
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 
-from ..config import DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, GRID_C, style_ax
+from ..config import DEVICE
 from ..data import get_moons
 from ..model import MeanFieldResNet
 from ..train import train, mu_pl_estimate
+from ..plots import decision_grid
+from ..plotting import publish
 
 
 # =============================================================================
@@ -64,11 +63,11 @@ def experiment_D(n_seeds: int = 10, n_epochs: int = 500):
               variabilidad de paisaje (θ₀) — aun así deben ser topológicamente
               similares si el Meta-Teorema 1 se cumple
 
-    FIGURAS GENERADAS (D_genericity.png):
-        Layout 3×3:
-        Fila 0 (D1):  curvas J ε=0  |  curvas J ε=0.01  |  boxplot J* y μ̂
-        Fila 1 (D2):  curvas J ε=0  |  curvas J ε=0.01  |  fronteras superpuestas
-        Fila 2 (D3):  curvas J ε=0  |  curvas J ε=0.01  |  fronteras superpuestas
+    FIGURA (D_genericity.png, datos en figures/data/D.npz), 2×3:
+        Fila 1: J por época (mediana y rango sobre semillas) con ε = 0 y
+                ε = 0.01, una columna por protocolo D1, D2, D3; J* en la leyenda.
+        Fila 2: fronteras de decisión superpuestas con ε = 0.01 de los runs
+                con accuracy ≥ 0.95, sobre los datos de todos los runs.
 
     RESULTADO ESPERADO:
         • D3 debe tener la banda más ancha de los tres sub-experimentos
@@ -178,211 +177,29 @@ def experiment_D(n_seeds: int = 10, n_epochs: int = 500):
         print(f"    ε={eps:5.3f}: J* = {np.mean(jstars):.5f} ± {np.std(jstars):.5f} | "
               f"μ̂ = {np.mean(mus):.4f} ± {np.std(mus):.4f}")
 
-    # ── Figura D — Layout 3×3 ─────────────────────────────────────────────────
-    # Paleta de colores para las seeds individuales
-    SEED_COLORS = ['#e74c3c', '#f39c12', '#2ecc71', '#3498db', '#9b59b6',
-                   '#e67e22', '#1abc9c', '#e84393', '#a29bfe', '#fd79a8']
-
-    fig = plt.figure(figsize=(21, 18))
-    fig.patch.set_facecolor(DARK_BG)
-    gs  = gridspec.GridSpec(3, 3, figure=fig, hspace=0.52, wspace=0.34)
-
-    def _plot_loss_curves(ax, results_list, title):
-        """
-        Curvas de pérdida individuales (transparentes) + media ± 1σ en blanco.
-
-        Cada curva fina de color corresponde a un run con distinta semilla.
-        La banda blanca muestra la variabilidad entre seeds: cuanto más estrecha,
-        más robusta es la convergencia (lo que predice la condición PL con ε > 0).
-        """
-        losses = np.array([r['hist']['loss'] for r in results_list])   # (S, E)
-        epochs = np.arange(losses.shape[1])
-        for i, r in enumerate(results_list):
-            ax.plot(r['hist']['loss'],
-                    color=SEED_COLORS[i % len(SEED_COLORS)],
-                    lw=0.9, alpha=0.45)
-        mean_l = losses.mean(axis=0)
-        std_l  = losses.std(axis=0)
-        ax.plot(epochs, mean_l, color='white', lw=2.0, label='Media')
-        ax.fill_between(epochs, mean_l - std_l, mean_l + std_l,
-                        color='white', alpha=0.18, label='±1σ')
-        style_ax(ax, title, 'Época', '$J$')
-        ax.legend(facecolor=PANEL_BG, labelcolor=TXT, fontsize=8)
-
-    # ── Fila 0: D1 ────────────────────────────────────────────────────────────
-    ax00 = fig.add_subplot(gs[0, 0])
-    _plot_loss_curves(ax00, d1_results[0.0],
-                      r'D1: init aleatoria, $\varepsilon=0$'
-                      '\n' r'$\gamma_0$ fija')
-
-    ax01 = fig.add_subplot(gs[0, 1])
-    _plot_loss_curves(ax01, d1_results[0.01],
-                      r'D1: init aleatoria, $\varepsilon=0.01$'
-                      '\n' r'$\gamma_0$ fija')
-
-    # D1 col 2: dos subpaneles independientes — μ̂ arriba, J* abajo.
-    # Cada métrica tiene su propia escala Y, evitando que J* (escala ~0.1)
-    # aplaste μ̂ (escala ~0.003) cuando comparten eje.
-    gs02  = gridspec.GridSpecFromSubplotSpec(
-        2, 1, subplot_spec=gs[0, 2], hspace=0.55
-    )
-    ax02a = fig.add_subplot(gs02[0])   # μ̂_PL
-    ax02b = fig.add_subplot(gs02[1])   # J*
-
-    mu_e0   = [r['mu']             for r in d1_results[0.0]]
-    mu_e05 = [r['mu']             for r in d1_results[0.01]]
-    js_e0   = [r['hist']['J_star'] for r in d1_results[0.0]]
-    js_e05 = [r['hist']['J_star'] for r in d1_results[0.01]]
-
-    _box_kw = dict(
-        patch_artist=True, widths=0.55,
-        medianprops=dict(color='white', lw=2.2),
-        whiskerprops=dict(color=TXT, lw=1.2),
-        capprops=dict(color=TXT, lw=1.2),
-        flierprops=dict(markerfacecolor=TXT, marker='o', markersize=4)
-    )
-
-    # — subpanel μ̂ —
-    bp_mu = ax02a.boxplot([mu_e0, mu_e05], positions=[1, 2], **_box_kw)
-    for patch, c in zip(bp_mu['boxes'], ['#e74c3c', '#2ecc71']):
-        patch.set_facecolor(c)
-        patch.set_alpha(0.75)
-    ax02a.set_xticks([1, 2])
-    ax02a.set_xticklabels(['ε=0', 'ε=0.01'], color=TXT, fontsize=8)
-    ax02a.axhline(0, color=GRID_C, lw=1.0, ls='--', alpha=0.7)
-    style_ax(ax02a, r'$\hat{\mu}_{PL}$ entre init seeds', '', r'$\hat{\mu}$')
-
-    # — subpanel J* —
-    bp_js = ax02b.boxplot([js_e0, js_e05], positions=[1, 2], **_box_kw)
-    for patch, c in zip(bp_js['boxes'], ['#e74c3c', '#2ecc71']):
-        patch.set_facecolor(c)
-        patch.set_alpha(0.75)
-    ax02b.set_xticks([1, 2])
-    ax02b.set_xticklabels(['ε=0', 'ε=0.01'], color=TXT, fontsize=8)
-    style_ax(ax02b, r'$J^*$ entre init seeds', '', r'$J^*$')
-
-    # ── Fila 1: D2 ────────────────────────────────────────────────────────────
-    ax10 = fig.add_subplot(gs[1, 0])
-    _plot_loss_curves(ax10, d2_results[0.0],
-                      r'D2: $\gamma_0$ aleatoria, $\varepsilon=0$'
-                      '\n' r'init fija')
-
-    ax11 = fig.add_subplot(gs[1, 1])
-    _plot_loss_curves(ax11, d2_results[0.01],
-                      r'D2: $\gamma_0$ aleatoria, $\varepsilon=0.01$'
-                      '\n' r'init fija')
-
-    # D2 col 2: fronteras de decisión superpuestas, ε=0.01, γ₀ variables.
-    # Scatter de TODOS los datasets (alpha bajo) como fondo, para que cada
-    # frontera tenga el contexto de su propio dataset.
-    ax12 = fig.add_subplot(gs[1, 2])
-    ax12.set_facecolor(PANEL_BG)
-
-    xmin_g = min(r['X_np'][:, 0].min() for r in d2_results[0.01]) - 0.15
-    xmax_g = max(r['X_np'][:, 0].max() for r in d2_results[0.01]) + 0.15
-    ymin_g = min(r['X_np'][:, 1].min() for r in d2_results[0.01]) - 0.15
-    ymax_g = max(r['X_np'][:, 1].max() for r in d2_results[0.01]) + 0.15
-    xx_c, yy_c = np.meshgrid(np.linspace(xmin_g, xmax_g, 150),
-                              np.linspace(ymin_g, ymax_g, 150))
-    grid_c = torch.tensor(
-        np.c_[xx_c.ravel(), yy_c.ravel()].astype(np.float32), device=DEVICE
-    )
-
-    for r in d2_results[0.01]:
-        ax12.scatter(r['X_np'][r['y_np'] == 0, 0], r['X_np'][r['y_np'] == 0, 1],
-                     c='#ff6b6b', s=5, alpha=0.06, zorder=1)
-        ax12.scatter(r['X_np'][r['y_np'] == 1, 0], r['X_np'][r['y_np'] == 1, 1],
-                     c='#74b9ff', s=5, alpha=0.06, zorder=1)
-
-    for i, r in enumerate(d2_results[0.01]):
-        if r['hist']['accuracy'][-1] < 0.95:
-            continue
-        m = r['model']
-        m.eval()
-        with torch.no_grad():
-            Z = torch.sigmoid(m(grid_c)).cpu().numpy().reshape(xx_c.shape)
-        ax12.contourf(xx_c, yy_c, Z, levels=[0.0, 0.5, 1.0],
-                      colors=[SEED_COLORS[i], SEED_COLORS[i]], alpha=0.06, zorder=2)
-        ax12.contour(xx_c, yy_c, Z, levels=[0.5],
-                     colors=[SEED_COLORS[i]], linewidths=1.8,
-                     alpha=0.90, zorder=5)
-
-    style_ax(ax12,
-             r'D2: fronteras de decisión, $\varepsilon=0.01$'
-             '\n' r'$\gamma_0$ variables  (acc $\geq$ 0.95)',
-             '$x_1$', '$x_2$')
-    ax12.set_aspect('equal')
-    ax12.set_xlim(xmin_g, xmax_g)
-    ax12.set_ylim(ymin_g, ymax_g)
-
-    # ── Fila 2: D3 ────────────────────────────────────────────────────────────
-    ax20 = fig.add_subplot(gs[2, 0])
-    _plot_loss_curves(ax20, d3_results[0.0],
-                      r'D3: ambas aleatorias, $\varepsilon=0$'
-                      '\n' r'data\_seed = init\_seed = $s$')
-
-    ax21 = fig.add_subplot(gs[2, 1])
-    _plot_loss_curves(ax21, d3_results[0.01],
-                      r'D3: ambas aleatorias, $\varepsilon=0.01$'
-                      '\n' r'data\_seed = init\_seed = $s$')
-
-    # D3 col 2: fronteras de decisión, ε=0.01, ambas semillas variables.
-    # Scatter de TODOS los datasets (alpha muy bajo) para que cada frontera
-    # tenga contexto. Cada modelo se evalúa en la cuadrícula común.
-    ax22 = fig.add_subplot(gs[2, 2])
-    ax22.set_facecolor(PANEL_BG)
-
-    xmin_d3 = min(r['X_np'][:, 0].min() for r in d3_results[0.01]) - 0.15
-    xmax_d3 = max(r['X_np'][:, 0].max() for r in d3_results[0.01]) + 0.15
-    ymin_d3 = min(r['X_np'][:, 1].min() for r in d3_results[0.01]) - 0.15
-    ymax_d3 = max(r['X_np'][:, 1].max() for r in d3_results[0.01]) + 0.15
-    xx_d3, yy_d3 = np.meshgrid(np.linspace(xmin_d3, xmax_d3, 150),
-                                np.linspace(ymin_d3, ymax_d3, 150))
-    grid_d3 = torch.tensor(
-        np.c_[xx_d3.ravel(), yy_d3.ravel()].astype(np.float32), device=DEVICE
-    )
-
-    # Scatter de todos los datasets (alpha muy bajo = nube de fondo)
-    for r in d3_results[0.01]:
-        ax22.scatter(r['X_np'][r['y_np'] == 0, 0], r['X_np'][r['y_np'] == 0, 1],
-                     c='#ff6b6b', s=5, alpha=0.06, zorder=1)
-        ax22.scatter(r['X_np'][r['y_np'] == 1, 0], r['X_np'][r['y_np'] == 1, 1],
-                     c='#74b9ff', s=5, alpha=0.06, zorder=1)
-
-    for i, r in enumerate(d3_results[0.01]):
-        if r['hist']['accuracy'][-1] < 0.95:
-            continue
-        m = r['model']
-        m.eval()
-        with torch.no_grad():
-            Z = torch.sigmoid(m(grid_d3)).cpu().numpy().reshape(xx_d3.shape)
-        ax22.contourf(xx_d3, yy_d3, Z, levels=[0.0, 0.5, 1.0],
-                      colors=[SEED_COLORS[i], SEED_COLORS[i]], alpha=0.06, zorder=2)
-        ax22.contour(xx_d3, yy_d3, Z, levels=[0.5],
-                     colors=[SEED_COLORS[i]], linewidths=1.8,
-                     alpha=0.90, zorder=5)
-
-    style_ax(ax22,
-             r'D3: fronteras de decisión, $\varepsilon=0.01$'
-             '\n' r'(data\_seed, init\_seed) distintos  (acc $\geq$ 0.95)',
-             '$x_1$', '$x_2$')
-    ax22.set_aspect('equal')
-    ax22.set_xlim(xmin_d3, xmax_d3)
-    ax22.set_ylim(ymin_d3, ymax_d3)
-
-    fig.suptitle(
-        r'Experimento D — Genericidad del minimizador (Meta-Teorema 1)'
-        '\n'
-        r'D1: $\gamma_0$ fija, init aleatoria   |   '
-        r'D2: init fija, $\gamma_0$ aleatoria   |   '
-        r'D3: ambas aleatorias',
-        color=TXT, fontsize=12
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    out = os.path.join(OUTPUT_DIR, 'D_genericity.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight', facecolor=DARK_BG)
-    plt.close()
-    print(f"\n  → {out}")
+    # ── Datos de la figura ───────────────────────────────────────────────────
+    # P(y = 1 | x) de todos los runs con ε = 0.01 en una rejilla común por
+    # protocolo; la figura dibuja solo las fronteras de los runs con acc ≥ 0.95.
+    eps_b = EPS_COMPARE[-1]
+    data = {'eps': np.array(EPS_COMPARE, dtype=float)}
+    for p, res in (('d1', d1_results), ('d2', d2_results), ('d3', d3_results)):
+        Xs = np.stack([r.get('X_np', X_np) for r in res[eps_b]])
+        ys = np.stack([r.get('y_np', y_np) for r in res[eps_b]])
+        lo = Xs.reshape(-1, 2).min(axis=0) - 0.15
+        hi = Xs.reshape(-1, 2).max(axis=0) + 0.15
+        probs = []
+        for r in res[eps_b]:
+            gx, gy, P = decision_grid(r['model'], bounds=(lo[0], hi[0], lo[1], hi[1]), n=150)
+            probs.append(P)
+        data.update({
+            f'loss_{p}':   [[r['hist']['loss'] for r in res[e]] for e in EPS_COMPARE],
+            f'J_star_{p}': [[r['hist']['J_star'] for r in res[e]] for e in EPS_COMPARE],
+            f'mu_{p}':     [[r['mu'] for r in res[e]] for e in EPS_COMPARE],
+            f'acc_{p}':    [[r['hist']['accuracy'][-1] for r in res[e]] for e in EPS_COMPARE],
+            f'X_{p}': Xs, f'y_{p}': ys, f'grid_x_{p}': gx, f'grid_y_{p}': gy,
+            f'P_{p}': np.stack(probs).astype(np.float32),
+        })
+    publish('D', data)
 
     print("\n  INTERPRETACIÓN:")
     print("  • D3 combina ambas fuentes de variabilidad: esperar banda más ancha.")

@@ -2,7 +2,7 @@
 
 **Referencia:** Daudin, S. & Delarue, F. (2025). *Genericity of the Polyak-Łojasiewicz inequality for mean-field Neural ODEs with entropic regularization.* arXiv:2507.08486.
 
-**Código:** `python -m mfnode` — ejecuta todos los experimentos. Opciones: `--experiment {A,B,C,D,E,F,G,H,I,J,K}`, `--epochs N`.
+**Código:** `python -m mfnode` — ejecuta todos los experimentos. Opciones: `--experiment {A,B,C,D,E,F,G,H,I,J,K}`, `--epochs N`, `--plot-only`. Cada experimento guarda los datos de su figura en `figures/data/<X>.npz` y la dibuja con `mfnode/plotting/`; `--plot-only` rehace las figuras desde esos archivos sin entrenar.
 
 ---
 
@@ -184,12 +184,7 @@ Adam como base es igualmente necesario: SGD puro no converge porque los gradient
 
 ![Evolución de features γ_t](../figures/A_feature_evolution.png)
 
-**Layout 2×4:**
-
-- **Fila superior (izq. a der.):** $\gamma_{t=0}$ (lunas entrelazadas), $\gamma_{t=0.20}$, $\gamma_{t=0.50}$, curvas de pérdida ($J$ total, BCE, prior energético).
-- **Fila inferior:** $\gamma_{t=0.70}$, $\gamma_{t=1.0}$ (clases separadas), trayectorias de 40 partículas ($t=0$ punto → $t=T$ estrella), frontera de decisión en $\mathbb{R}^2$.
-
-El rectángulo discontinuo en cada snapshot indica la extensión original de $\gamma_0$, permitiendo ver el desplazamiento acumulado. La frontera en el espacio original es no lineal pues incorpora toda la geometría del flujo $\phi_T$, aunque el clasificador final sea lineal sobre $X_T$.
+**Layout 1×4:** $\gamma_0$ (lunas entrelazadas), $\gamma_{T/2}$, $\gamma_T$ con las trayectorias completas de 40 partículas y la recta del clasificador lineal sobre $X_T$ (discontinua), y la frontera de decisión en $\mathbb{R}^2$ sobre $P(y=1|x)$ sombreada. Cada panel ajusta su ventana a los puntos de ese instante. La frontera en el espacio original es no lineal pues incorpora toda la geometría del flujo $\phi_T$, aunque el clasificador final sea lineal sobre $X_T$.
 
 ---
 
@@ -203,7 +198,7 @@ El rectángulo discontinuo en cada snapshot indica la extensión original de $\g
 
 ![Curvas de convergencia](../figures/B1_convergence_curves.png)
 
-Los ejes de $J$ y $\mathcal{E}$ están recortados ($J \leq 0.5$, $\mathcal{E} \leq 0.15$) para que $\varepsilon=0.5$ no domine la escala. Las curvas de accuracy muestran la señal bruta (trazo fino) y una media móvil de ventana 15 (trazo grueso).
+$J$ y $\mathcal{E}$ van en escala logarítmica, sin recortes; hay una curva por $\varepsilon$, en azules de claro ($\varepsilon$ pequeño) a oscuro. La accuracy se muestra como media móvil de ventana 15.
 
 **Panel izquierdo (pérdida total $J$):** Todos los modelos convergen. Para $\varepsilon$ mayores, el valor asintótico $J^*$ es más alto porque incluye mayor penalización de regularización. La velocidad de convergencia es comparable entre todos los $\varepsilon$.
 
@@ -215,10 +210,9 @@ Los ejes de $J$ y $\mathcal{E}$ están recortados ($J \leq 0.5$, $\mathcal{E} \l
 
 ![Fronteras de decisión](../figures/B2_decision_boundaries.png)
 
-Layout **2×5** (una columna por $\varepsilon$):
+Layout **1×5** (una columna por $\varepsilon$, ventana $[-2.5, 2.5]^2$): frontera de decisión $P(y=1|x) = 0.5$ en negro sobre la probabilidad sombreada, los datos y el campo de velocidad $F(x, t=0.5)$ a mitad del flujo en flechas grises, con la misma escala en todos los paneles para que su longitud sea comparable entre $\varepsilon$.
 
-- **Fila superior:** Frontera de decisión $P(y=1|x) = 0.5$ en $\mathbb{R}^2$. Mayor $\varepsilon$ produce fronteras más suaves y regulares; la zona de transición entre clases es más ancha (el modelo reduce su certeza lejos de la frontera).
-- **Fila inferior:** Campo de velocidad $F(x, t=0.5)$ a mitad del flujo. Dirección normalizada con flechas; color = magnitud. El campo muestra cómo la ODE empuja las dos clases en direcciones opuestas para crear la separación que el clasificador lineal después explota.
+Mayor $\varepsilon$ produce fronteras más suaves y regulares; la zona de transición entre clases es más ancha (el modelo reduce su certeza lejos de la frontera). El campo muestra cómo la ODE empuja las dos clases en direcciones opuestas para crear la separación que el clasificador lineal después explota.
 
 ---
 
@@ -232,9 +226,9 @@ Layout **2×5** (una columna por $\varepsilon$):
 
 ### C1 — Diagrama log-log: $\|\nabla J\|^2$ vs $(J - J^*)$
 
-Cada punto es una época. La **línea blanca discontinua** es la referencia $\|\nabla J\|^2 = 2(J-J^*)$ ($c=1$). La **línea naranja** es $2\hat{\mu}_\text{min}(J-J^*)$, la cota real estimada con la constante PL más conservadora entre todos los $\varepsilon$.
+Cada punto es una época, coloreado por $\varepsilon$. La **línea negra** es $2\hat{\mu}_\text{min}(J-J^*)$, la cota estimada con la constante PL más conservadora entre todos los $\varepsilon$.
 
-Los puntos están por encima de la línea naranja, confirmando PL con constante $\hat{\mu} > 0$. La pendiente $\approx 1$ en log-log es la firma visual de la condición PL: $\|\nabla J\|^2$ crece proporcionalmente a $(J-J^*)$.
+Los puntos están por encima de la línea negra, confirmando PL con constante $\hat{\mu} > 0$. La pendiente $\approx 1$ en log-log es la firma visual de la condición PL: $\|\nabla J\|^2$ crece proporcionalmente a $(J-J^*)$.
 
 ### C2 — Convergencia exponencial (escala semilog)
 
@@ -244,13 +238,13 @@ $$J(\theta_s) - J^* \lesssim (J(\theta_0) - J^*) \cdot e^{-2\mu s}$$
 
 Con SGD + lr constante el aplanamiento final refleja genuina convergencia al mínimo, sin artefactos del scheduler.
 
-### C3 — Constante PL estimada $\hat{\mu}$ por $\varepsilon$
+### Constante PL estimada $\hat{\mu}$ por $\varepsilon$ (en la leyenda)
 
 Estimada como el percentil 10 del ratio $\|\nabla J\|^2 / (2(J - J^*))$. El paper garantiza $\mu > 0$ para todo $\varepsilon > 0$ pero **no** que $\mu$ crezca con $\varepsilon$. Empíricamente $\hat{\mu}$ puede decrecer con $\varepsilon$ porque la regularización eleva $J^*$ (mayor denominador en el ratio). El resultado clave es $\hat{\mu} > 0$ para todo $\varepsilon > 0$.
 
-### C4 — Ratio PL vs época (escala log)
+### C3 — Ratio PL vs época (escala log)
 
-El ratio $\|\nabla J\|^2 / (2(J - J^*))$ se mantiene positivo y por encima de $\hat{\mu}$ (línea naranja) durante todo el entrenamiento. La condición PL se cumple no solo al inicio sino también en las etapas tardías, confirmando la hipótesis **local** del Meta-Teorema 2.
+El ratio $\|\nabla J\|^2 / (2(J - J^*))$ se mantiene positivo y por encima de $\hat{\mu}_\text{min}$ (línea negra) durante todo el entrenamiento. La condición PL se cumple no solo al inicio sino también en las etapas tardías, confirmando la hipótesis **local** del Meta-Teorema 2.
 
 ---
 
@@ -266,12 +260,11 @@ El ratio $\|\nabla J\|^2 / (2(J - J^*))$ se mantiene positivo y por encima de $\
 
 ![Genericidad](../figures/D_genericity.png)
 
-**Layout 3×3** (una fila por sub-experimento):
-- **Columna izquierda:** Curvas de pérdida individuales (colores) + media ±1σ (blanco) para $\varepsilon=0$.
-- **Columna central:** Ídem para $\varepsilon=0.01$.
-- **Columna derecha:**
-  - D1: Boxplots de $\hat{\mu}_{PL}$ y $J^*$ entre seeds para $\varepsilon=0$ (rojo) vs $\varepsilon=0.01$ (verde).
-  - D2/D3: Fronteras de decisión superpuestas ($\varepsilon=0.01$) — nube de puntos de todos los datasets como fondo (alpha muy bajo), contornos $P(y=1|x)=0.5$ de los runs con acc ≥ 95%.
+**Layout 2×3** (una columna por sub-experimento):
+- **Fila superior:** $J$ por época, mediana y rango entre seeds, $\varepsilon=0$ (naranja) frente a $\varepsilon=0.01$ (azul); la leyenda da $J^*$ medio ± desviación típica.
+- **Fila inferior:** fronteras de decisión superpuestas ($\varepsilon=0.01$) de los runs con acc ≥ 95%, sobre la nube de puntos de todos los datasets. D1 también muestra ahora sus fronteras.
+
+Los $\hat{\mu}_{PL}$ de cada seed se imprimen en consola y se guardan en `figures/data/D.npz`.
 
 ### Interpretación
 
@@ -281,7 +274,7 @@ El ratio $\|\nabla J\|^2 / (2(J - J^*))$ se mantiene positivo y por encima de $\
 | D2 | Aleatoria (0–9) | Fija (seed=2) | Distribución de datos |
 | D3 | Aleatoria ($s$) | Aleatoria ($s$) | Ambas combinadas |
 
-La banda ±1σ de D3 debe ser la más ancha (combina ambas fuentes). Con $\varepsilon=0.01$ la condición PL garantiza $\hat{\mu} > 0$ cerca del óptimo; la regularización no reduce necesariamente la varianza entre seeds, sino que asegura la existencia de un mínimo global estable. Las fronteras de D2/D3 son cualitativamente similares entre sí a pesar de provenir de $(\gamma_0, \theta_0)$ completamente distintos — verificación visual del Meta-Teorema 1.
+La banda de D3 debe ser la más ancha (combina ambas fuentes). Con $\varepsilon=0.01$ la condición PL garantiza $\hat{\mu} > 0$ cerca del óptimo; la regularización no reduce necesariamente la varianza entre seeds, sino que asegura la existencia de un mínimo global estable. Las fronteras de D2/D3 son cualitativamente similares entre sí a pesar de provenir de $(\gamma_0, \theta_0)$ completamente distintos — verificación visual del Meta-Teorema 1.
 
 ---
 
@@ -298,9 +291,9 @@ La banda ±1σ de D3 debe ser la más ancha (combina ambas fuentes). Con $\varep
 
 **Layout 1×2** (dos paneles en columnas):
 
-- **Panel izquierdo (E-1):** Importancias $\|a_0^m\|_2$ ordenadas descendentemente, una curva por seed. La línea blanca es la media y la banda blanca es ±1σ sobre las 10 seeds. Una banda estrecha indica que la estructura de importancia neuronal es robusta a la inicialización.
+- **Panel izquierdo (E-1):** Importancias $\|a_0^m\|_2$ ordenadas descendentemente (escala log), una curva fina azul por seed y la media en negro. Curvas finas apretadas en torno a la media indican que la estructura de importancia neuronal es robusta a la inicialización.
 
-- **Panel derecho (E-2):** Ídem pero variando el dataset. Una banda estrecha indica robustez a $\gamma_0$ — directa verificación de que $\nu^*$ es genuinamente una propiedad de la geometría del problema, no de las condiciones de inicio.
+- **Panel derecho (E-2):** Ídem pero variando el dataset. Curvas apretadas indican robustez a $\gamma_0$ — directa verificación de que $\nu^*$ es genuinamente una propiedad de la geometría del problema, no de las condiciones de inicio.
 
 Si el Meta-Teorema 1 se cumple (minimizador único estable), las curvas de importancia deben ser cualitativamente similares entre seeds: mismo "codo" pronunciado en los primeros ranks (pocas neuronas dominantes) y misma caída. La comparación E-1 vs E-2 permite separar cuánta variabilidad proviene de la inicialización y cuánta del dataset.
 
@@ -319,12 +312,12 @@ Si el Meta-Teorema 1 se cumple (minimizador único estable), las curvas de impor
 
 ![Convergencia en make_circles](../figures/F_circles_parameter_distribution.png)
 
-**Panel único:** Curvas de pérdida de F1 (rojo) y F2 (azul) superpuestas.
-- Curvas individuales por seed en trazo fino y transparente (alpha=0.25).
-- Media sobre seeds en trazo grueso + banda ±1σ.
-- Leyenda con $\bar{J}_\text{final}$ (media de las últimas 50 épocas) ± std. Se usa $\bar{J}_\text{final}$ en lugar de $J^*$ porque pSGLD explora la distribución estacionaria $\nu^* \propto \exp(-J/\varepsilon)$ y no converge puntualmente al mínimo.
+**Layout 1×3:**
+- **Pérdida:** curvas de F1 (naranja) y F2 (azul), una fina por seed y la media en grueso. La leyenda da $\bar{J}_\text{final}$ (media de las últimas 50 épocas) ± std; se usa en lugar de $J^*$ porque pSGLD explora la distribución estacionaria $\nu^* \propto \exp(-J/\varepsilon)$ y no converge puntualmente al mínimo.
+- **Pesos de entrada $a_1^m$** de todos los runs de F2, coloreados por la importancia $\|a_0^m\|_2$.
+- **Dirección de $a_1^m$:** histograma del ángulo ponderado por $\|a_0^m\|_2$ en F1 y F2, frente a la densidad uniforme. Si $\nu^*$ hereda la simetría $SO(2)$ de los datos, el histograma debe salir plano.
 
-**Interpretación:** Bandas estrechas en F1 y F2 indican que la convergencia es robusta tanto a variaciones del dataset como de la inicialización. La comparación F1 vs F2 permite identificar cuál fuente de aleatoriedad introduce más variabilidad.
+**Interpretación:** Curvas apretadas en F1 y F2 indican que la convergencia es robusta tanto a variaciones del dataset como de la inicialización. La comparación F1 vs F2 permite identificar cuál fuente de aleatoriedad introduce más variabilidad.
 
 ---
 
@@ -334,35 +327,34 @@ Si el Meta-Teorema 1 se cumple (minimizador único estable), las curvas de impor
 
 **Marco teórico:** El paper trabaja con distribución inicial continua $\gamma_0$ y el límite $M \to \infty$ neuronas. El caso con $N$ datos finitos queda fuera de su alcance: en la Sección 1.6 (punto 3) los autores lo señalan como extensión futura. La convergencia $J^*_N \to J^*_\infty$ es por tanto una **conjetura**, no un resultado demostrado. La tasa natural esperada por analogía con la ley de los grandes números sería $\text{gap}(N) \sim C \cdot N^{-0.5}$. El experimento busca evidencia empírica y estima la tasa $\alpha$.
 
-**Configuración:** $N \in \{25, 50, 100, 200, 400, 800\}$ (progresión geométrica de razón 2, desde datos escasos hasta régimen rico; $N=400$ es el valor estándar del resto de experimentos), $\varepsilon \in \{0, 0.01\}$, 20 seeds por combinación, 700 épocas.
+**Configuración:** $N \in \{50, 100, 200, 400, 800, 1600, 3200\}$ (progresión geométrica de razón 2, desde datos escasos hasta régimen rico; $N=400$ es el valor estándar del resto de experimentos), $\varepsilon \in \{0, 0.01\}$, 20 seeds por combinación, 700 épocas.
 
-**Estimador de $J^*_\infty$:** Se evalúa la BCE (sin regularización) sobre un test set oráculo de $N_\text{test} = 10\,000$ puntos (semilla fija = 999). El gap se define como:
-$$\text{gap}(N) \approx \text{BCE}_\text{test}(N_\text{large}) - \text{BCE}_\text{test}(N)$$
-donde $J^*_\infty$ se aproxima con la media de BCE$_\text{test}$ para $N=800$.
+**Estimador de $J^*_\infty$:** Se evalúa la BCE (sin regularización) sobre un test set oráculo de $N_\text{test} = 10\,000$ puntos (semilla fija = 999), que aproxima la medida continua $\gamma_0$. El gap de generalización es
+$$\text{gap}(N) = \text{BCE}_\text{test}(N) - \text{BCE}_\text{train}(N).$$
 
 ![Convergencia N→∞](../figures/G_convergence_problem.png)
 
-**Layout 1×3:**
+**Layout 1×2:**
 
 - **G1 — Convergencia de la pérdida con $N$:** BCE$_\text{test}$ (línea continua) y BCE$_\text{train}$ (línea discontinua), media ±1σ sobre 20 seeds, vs. $N$ en escala log en $x$. La brecha entre ambas es el sobreajuste: grande para $N$ pequeño, pequeña para $N$ grande. Con $\varepsilon=0.01$ la curva de test queda por debajo de la de $\varepsilon=0$ para $N$ pequeño — la regularización actúa como prior que compensa la falta de datos.
 
-- **G2 — Gap de generalización:** BCE$_\text{test}$ $-$ BCE$_\text{train}$ vs. $N$. Cuantifica el sobreajuste directamente: decrece al crecer $N$ porque la distribución empírica aproxima mejor a $\gamma_0$.
-
-- **G3 — Tasa de convergencia del gap (log-log):** $\log\,\text{gap}(N)$ vs. $\log N$ con ajuste lineal sobre $N \geq 100$ (se excluyen $N < 100$ porque en el régimen escaso el gap no sigue aún la ley de potencias). La pendiente es $-\alpha$. Resultados empíricos:
+- **G2 — Gap de generalización y su tasa (log-log):** BCE$_\text{test}$ $-$ BCE$_\text{train}$ vs. $N$, que cuantifica el sobreajuste y decrece al crecer $N$ porque la distribución empírica aproxima mejor a $\gamma_0$. Se ajusta una recta a $\log\,\text{gap}(N)$ vs. $\log N$ sobre $N \geq 100$ (se excluyen $N < 100$ porque en el régimen escaso el gap no sigue aún la ley de potencias). La pendiente es $-\alpha$. Resultados empíricos:
   - $\varepsilon=0$: $\alpha \approx 0.78$
   - $\varepsilon=0.01$: $\alpha \approx 0.85$
 
-  Ambas tasas son más rápidas que la referencia $N^{-0.5}$.
+  Ambas tasas son más rápidas que la referencia $N^{-1/2}$, dibujada en gris.
 
 ---
 
 ## 11. Experimento H — Diagnóstico de pSGLD
 
+> **Nota sobre las cifras de H–K.** Los resultados numéricos de las secciones 11–14 proceden de una versión anterior del código en la que el prior era $\nu^\infty \propto e^{-\ell(a)/\varepsilon}$ (muy concentrado para $\varepsilon = 0.01$). El código actual usa $\nu^\infty \propto e^{-\ell(a)}$, que no depende de $\varepsilon$, así que estas cifras (y las comparaciones con MMD y Sinkhorn, que usan muestras del prior) deben regenerarse antes de citarlas: `python -m mfnode -e H` (ídem I, J, K).
+
 **Objetivo:** Cuantificar la brecha entre la distribución estacionaria empírica de pSGLD ($\hat{\nu}^*$) y el prior de Gibbs teórico $\nu^\infty$. La causa es estructural: $\mathrm{KL}(\nu_N\|\nu^\infty) = +\infty$ porque $\nu_N = \frac{1}{M}\sum_m \delta_{a^m}$ es discreta y $\nu^\infty$ es continua — el término entrópico del funcional $J$ no está bien definido en el régimen discreto.
 
 **Protocolo:**
 1. Entrenar con pSGLD (800 épocas) y recoger 2000 snapshots post-convergencia (thin=10) → $\hat{\nu}^*$ como promedio ergódico.
-2. Generar 8000 muestras de $\nu^\infty \propto e^{-\ell(a)/\varepsilon}$ por ULA con step adaptativo $\eta = \min(5\times10^{-3}, 0.5\varepsilon)$.
+2. Generar 8000 muestras de $\nu^\infty \propto e^{-\ell(a)}$ por ULA con paso $\eta = 0.01$ (el prior no depende de $\varepsilon$).
 3. Calcular MMD² y $W_1$ entre los tres objetos: $\nu_N$ (64 partículas finales), $\hat{\nu}^*$ (trayectoria), $\nu^\infty$ (ULA).
 
 **Métricas:**
@@ -396,6 +388,8 @@ implementada en dominio logarítmico para estabilidad numérica.
 
 **Configuración:** make\_moons, $N=400$, $\varepsilon=0.01$, 700 épocas.
 
+**Figura (2×2):** BCE de entrenamiento; marginal de $a_0^{(0)}$ (prior, $\hat{\nu}^*_\text{pSGLD}$ y las partículas entrenadas con MMD y Sinkhorn); $W_1$ por coordenada entre las partículas **entrenadas** de cada método y $\hat{\nu}^*_\text{pSGLD}$, con las partículas finales del propio pSGLD como suelo de muestreo ($M = 64$); y $W_1$ tras continuar cada solución 1000 pasos con pSGLD (la comparación original). Esa continuación acerca cualquier punto de partida a la estacionaria de pSGLD, así que el tercer panel es el que compara los regularizadores tal cual.
+
 **Resultados:** Los tres métodos convergen a accuracy ≈ 90% y a distribuciones de parámetros similares (MMD²($\nu_\text{reg}$, $\hat{\nu}^*_\text{pSGLD}$) ≈ 0.014–0.019). En clasificación la tarea no discrimina entre regularizadores.
 
 ![Comparación regularizadores](../figures/I_regularizer_comparison.png)
@@ -428,7 +422,7 @@ pSGLD subestima sistemáticamente los precios altos y tiene mayor varianza de er
 
 ## 14. Experimento K — Barrido de $\varepsilon$ en regresión
 
-**Motivación:** Con $\varepsilon=0.01$ la fracción de regularización en regresión es 0.003 vs 3.33 en clasificación. Se barre $\varepsilon \in \{0.001, 0.01, 0.1, 0.5, 1.0, 5.0\}$ regenerando las muestras del prior para cada $\varepsilon$ (obligatorio: $\nu^\infty \propto e^{-\ell(a)/\varepsilon}$ depende de $\varepsilon$).
+**Motivación:** Con $\varepsilon=0.01$ la fracción de regularización en regresión es 0.003 vs 3.33 en clasificación. Se barre $\varepsilon \in \{0.001, 0.01, 0.1, 0.5, 1.0, 5.0\}$ con las mismas muestras del prior para todos los $\varepsilon$ ($\nu^\infty \propto e^{-\ell(a)}$ no depende de $\varepsilon$).
 
 **Resultados ($R^2_\text{test}$):**
 

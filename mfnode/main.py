@@ -7,22 +7,44 @@ Uso:
     python -m mfnode                        # todos los experimentos
     python -m mfnode --experiment A         # solo experimento A
     python -m mfnode --experiment B --epochs 500
+    python -m mfnode --plot-only            # redibuja desde figures/data/*.npz
     python mfnode/main.py --experiment all  # equivalente al primero
+
+Cada experimento guarda sus resultados en figures/data/<X>.npz y dibuja la
+figura a partir de ese archivo; --plot-only rehace las figuras sin entrenar
+(y sin necesitar torch).
 """
 
 from __future__ import annotations
 
 import argparse
 
-from .config import DEVICE, OUTPUT_DIR
-from .experiments import (
-    experiment_A, experiment_B, experiment_C,
-    experiment_D, experiment_E_robustness, experiment_F, experiment_G,
-    experiment_H, experiment_I, experiment_J, experiment_K,
-)
+EXPERIMENTS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']
+
+
+def plot_only(experiment: str = 'all') -> None:
+    """Redibuja las figuras a partir de los datos guardados, sin entrenar."""
+    from .plotting import data_path, redraw
+
+    names = EXPERIMENTS if experiment == 'all' else [experiment]
+    done = redraw(names)
+    for name in names:
+        if name in done:
+            for out in done[name]:
+                print(f"  {name} → {out}")
+        else:
+            print(f"  {name}: no hay datos en {data_path(name)}; "
+                  f"ejecuta antes  python -m mfnode -e {name}")
 
 
 def main(experiment: str = 'all', epochs: int | None = None) -> None:
+    from .config import DEVICE, OUTPUT_DIR
+    from .experiments import (
+        experiment_A, experiment_B, experiment_C,
+        experiment_D, experiment_E_robustness, experiment_F, experiment_G,
+        experiment_H, experiment_I, experiment_J, experiment_K,
+    )
+
     print("=" * 65)
     print("  MEAN-FIELD NEURAL ODE — MAKE MOONS")
     print("  Aplicación de arXiv:2507.08486  (Daudin & Delarue, 2025)")
@@ -116,7 +138,7 @@ def _parse_args():
     )
     parser.add_argument(
         '--experiment', '-e',
-        choices=['all', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'],
+        choices=['all'] + EXPERIMENTS,
         default='all',
         help='Experimento a ejecutar (por defecto: all)',
     )
@@ -126,9 +148,20 @@ def _parse_args():
         default=None,
         help='Número de épocas (sobrescribe el valor por defecto de cada experimento)',
     )
+    parser.add_argument(
+        '--plot-only',
+        action='store_true',
+        help='Redibuja las figuras desde figures/data/*.npz sin entrenar',
+    )
     return parser.parse_args()
 
 
+def run(args) -> None:
+    if args.plot_only:
+        plot_only(args.experiment)
+    else:
+        main(experiment=args.experiment, epochs=args.epochs)
+
+
 if __name__ == '__main__':
-    args = _parse_args()
-    main(experiment=args.experiment, epochs=args.epochs)
+    run(_parse_args())

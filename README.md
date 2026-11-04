@@ -38,13 +38,13 @@ directly in the input space ℝ² (no embedding). The loss is the terminal cost
 | | Question | Figure |
 | --- | --- | --- |
 | A | Does the flow transport the two moons to a linearly separable configuration? | `A_feature_evolution.png` |
-| B | Effect of ε on convergence, decision boundaries and the Gibbs shape of ν\* | `B1`, `B2` |
+| B | Effect of ε on convergence, decision boundaries and the velocity field | `B1`, `B2` |
 | C | Does the PL inequality ‖∇J‖² ≥ 2μ(J − J\*) hold along training? | `C_pl_verification.png` |
 | D, E | Genericity: is the minimizer stable across initialization and data seeds? | `D_genericity.png`, `E_parameter_robustness.png` |
-| F | On `make_circles`, does ν\* inherit the SO(2) symmetry of the data? | `F_circles_parameter_distribution.png` |
+| F | On `make_circles`, does ν\* inherit the SO(2) symmetry of the data? (direction of the input weights against the uniform law) | `F_circles_parameter_distribution.png` |
 | G | Empirical convergence J\*_N → J\*_∞ as the training set grows | `G_convergence_problem.png` |
 | **H** | Does pSGLD actually sample from ν\*? (MMD² and W₁ between final particles, time-averaged ν̂\* and the prior) | `H_psgld_diagnostic.png` |
-| **I** | Can the Langevin noise be replaced by an explicit MMD or Sinkhorn penalty? | `I_regularizer_comparison.png` |
+| **I** | Can the Langevin noise be replaced by an explicit MMD or Sinkhorn penalty? (W₁ of each method's trained particles to the pSGLD time average) | `I_regularizer_comparison.png` |
 | **J** | The same comparison on real data: California Housing regression (PCA to ℝ², train/test R²) | `J_california_regression.png` |
 | **K** | ε sweep for the regression task, per method | `K_epsilon_sweep.png` |
 
@@ -59,16 +59,20 @@ pip install -r requirements.txt
 python -m mfnode --experiment H              # one experiment
 python -m mfnode --experiment I --epochs 300 # override the number of epochs
 python -m mfnode                             # all experiments (slow)
-pytest                                       # tests (~1 min on a CPU)
+python -m mfnode --plot-only                 # redraw every figure from saved data
+pytest                                       # tests (a few minutes on a CPU)
 ```
+
+Each experiment saves the arrays behind its figure in `figures/data/<X>.npz` and
+draws the figure from them (`mfnode/plotting/`), so figures can be restyled and
+redrawn with `--plot-only` without training, and without torch. Experiments J and
+K download California Housing through scikit-learn on first use.
 
 The tests check the building blocks: MMD² and the Sinkhorn divergence vanish on
 identical samples and grow with a shift, their gradients move the particles,
 ULA reproduces the moments of the prior, and short Adam, pSGLD, MMD and Sinkhorn
-training runs decrease the loss.
-
-Figures are written to `figures/`. Experiment J downloads California Housing
-through scikit-learn on first use.
+training runs decrease the loss. Every figure is also drawn from synthetic data,
+and every experiment is run end to end with tiny settings.
 
 ## Layout
 
@@ -78,11 +82,12 @@ mfnode/
   train.py        Adam / pSGLD training loop, PL constant estimate
   metrics.py      MMD², Sinkhorn divergence, W₁, ULA prior sampler, pSGLD snapshots
   data.py         make_moons, make_circles
-  experiments/    exp_a.py … exp_k.py
+  experiments/    exp_a.py … exp_k.py: compute and save the results of each experiment
+  plotting/       figures drawn from the saved arrays (style.py: one palette, light theme)
   main.py         command-line entry point
 tests/            pytest suite
 docs/             full write-up of the experiments and the mathematical setup (in Spanish)
-figures/          figures produced by the experiments
+figures/          figures produced by the experiments; data/ holds the arrays behind them
 ```
 
 Docstrings are in English; inline comments, the experiment headers and the documents in `docs/` are in Spanish.
