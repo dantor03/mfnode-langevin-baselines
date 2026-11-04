@@ -12,7 +12,7 @@ from .metrics import (
 
 
 # =============================================================================
-# § 4  BUCLE DE ENTRENAMIENTO
+# § 4  TRAINING LOOP
 # =============================================================================
 def train(model, X, y, epsilon,
           lr: float = 0.01, n_epochs: int = 800, verbose: bool = True,
@@ -21,92 +21,83 @@ def train(model, X, y, epsilon,
           prior_samples=None, mmd_sigma: float = None,
           sinkhorn_blur: float = 0.05):
     """
-    Bucle de entrenamiento.  Tres modos de optimizador:
+    Training loop with four optimizer modes.
 
-    - Por defecto (use_sgd=False, use_sgld=False):
-        Adam + cosine annealing.  Convergencia rápida; el lr→0 al final
-        puede aplanar artificialmente las curvas (artefacto del scheduler).
+    - Default (use_sgd=False, use_sgld=False):
+        Adam + cosine annealing.  Fast convergence; lr → 0 at the end can
+        artificially flatten the curves (a scheduler artefact).
 
     - use_sgd=True:
-        SGD puro + lr constante, SIN ruido.  Gradient flow determinístico
-        limpio.  Recomendado para exp_c (verificación PL) donde J* debe ser
-        el mínimo geométrico real sin artefactos.
+        plain SGD with constant lr and NO noise: a clean deterministic gradient
+        flow.  Used for exp_c (PL verification), where J* must be the actual
+        minimum without artefacts.
 
     - use_sgld=True:
-        pSGLD — preconditioned Stochastic Gradient Langevin Dynamics
-        (Li et al., 2016).  En cada paso:
-            θ ← Adam(θ, ∇J) + √(2·η_t·ε·M_t)·ξ,   ξ ~ N(0,I)
-        donde M_t[j] = min(1/(√(v̂_t[j]) + δ), 1) es el precondicionador
-        de Adam (segundo momento sesgado-corregido) por parámetro j,
-        acotado superiormente en 1 para evitar explosión de ruido en
-        direcciones planas (v̂_t ≈ 0).  El clamp corresponde a usar un
-        hiperparámetro λ ≥ 1 en lugar de δ = eps_adam = 1e-8 (Li et al. 2016
-        usan λ separado de Adam's eps).
-        El ruido DEBE estar acoplado a M_t: ruido isotrópico (σ constante)
-        desacopla la parte estocástica del precondicionador y destruye la
-        distribución estacionaria — la cadena de Markov ya no converge a
-        ν* ∝ exp(−J(θ)/ε).  Con M_t acotado, la distribución estacionaria
-        es ν* ∝ exp(−J(θ)/ε) bajo el precondicionador de Adam.
-        Adam como base es necesario: SGD puro no converge porque los
-        gradientes de BCE son ~1e-5 y Adam adapta el lr por parámetro.
-        La penalización L4+L2 actúa como prior ν^∞ ∝ exp(−ℓ(a));
-        el ruido proporciona el término entrópico −H(ν_t).
-        Con ε=0 el ruido es exactamente cero (Adam estándar).
-        Recomendado para exp_b, exp_e, exp_f (verificación de ν*).
+        pSGLD, preconditioned stochastic gradient Langevin dynamics
+        (Li et al., 2016).  Each step is an Euler–Maruyama step of the
+        preconditioned Langevin SDE:
+            θ ← Adam(θ, ∇J) + √(2 η_t ε M_t) ξ,   ξ ~ N(0, I),
+        where M_t[j] = min(1/(√(v̂_t[j]) + δ), 1) is Adam's preconditioner
+        (bias-corrected second moment) for parameter j, capped at 1 to avoid
+        exploding noise in flat directions (v̂_t ≈ 0).  The cap plays the role
+        of the separate stabilization hyperparameter λ ≥ 1 of Li et al. (2016),
+        instead of Adam's δ = 1e-8.
+        The noise MUST be coupled to M_t: isotropic noise decouples the
+        stochastic part from the preconditioner and the chain no longer has
+        ν* ∝ exp(−J(θ)/ε) as stationary law.
+        Adam is needed as the base optimizer: plain SGD does not converge
+        because the BCE gradients are ~1e-5.  The L4 + L2 penalty acts as the
+        prior ν^∞ ∝ exp(−ℓ(a)) and the noise supplies the entropy term −H(ν_t).
+        With ε = 0 the noise is exactly zero (plain Adam).
+        Used for exp_b, exp_e, exp_f (verification of ν*).
 
-    CONDICIÓN POLYAK-ŁOJASIEWICZ (Meta-Teorema 2):
-        ‖∇J(θ)‖² ≥ 2μ · (J(θ) − J*)
+    - use_mmd=True / use_sinkhorn=True:
+        deterministic Adam with the L4 + L2 penalty replaced by
+        ε · MMD²(particles, prior) or ε · Sinkhorn(particles, prior).
 
-    Métricas registradas por época:
-        loss       : J(θ) = BCE + ε·prior energético (evaluado SIN ruido)
-        loss_term  : BCE pura
-        loss_reg   : prior energético ℓ(θ)/N_params
-        grad_norm2 : ‖∇J‖² antes de clipping — numerador de PL
-        pl_ratio   : ‖∇J‖² / (2·(J−J*))
-        accuracy   : proporción de puntos correctamente clasificados
+    POLYAK–ŁOJASIEWICZ CONDITION (Meta-Theorem 2):
+        ‖∇J(θ)‖² ≥ 2μ (J(θ) − J*)
 
-    LEARNING RATE RECOMENDADO POR MODO:
-        Adam  (defecto): lr = 0.01  — Adam adapta el lr por parámetro.
-        SGD   (use_sgd):  lr = 0.01  — gradient flow determinístico.
-        SGLD  (use_sgld): lr = 0.01  — Adam como base; el ruido pSGLD
-            √(2·η_t·ε·M_t) se añade tras el paso Adam.  M_t acopla el
-            ruido al precondicionador, preservando la distribución ν*.
+    Metrics recorded at every epoch:
+        loss       : J(θ) = terminal cost + ε · regularizer (evaluated WITHOUT noise)
+        loss_term  : terminal cost alone
+        loss_reg   : regularizer
+        grad_norm2 : ‖∇J‖² before clipping, numerator of the PL ratio
+        pl_ratio   : ‖∇J‖² / (2 (J − J*))
+        accuracy   : fraction of correctly classified points (R² for regression)
+
+    Recommended learning rate: lr = 0.01 in every mode.
 
     Args:
-        model    : MeanFieldResNet a entrenar
-        X        : (N, d1) tensor — features (batch completo, N/M = 1)
-        y        : (N,) tensor — etiquetas
-        epsilon  : coeficiente ε (regularización + temperatura Langevin)
-        lr       : learning rate inicial (ver tabla de valores recomendados)
-        n_epochs : número de épocas
-        verbose  : imprime progreso cada 200 épocas
-        use_sgd  : SGD + lr constante, sin ruido (exp_c)
-        use_sgld    : pSGLD — Adam + ruido Langevin precondicionado (exp_b, E, F)
-        use_mmd     : Adam + regularizador MMD²(partículas, prior_samples).
-                      Reemplaza la penalización L4+L2 por la distancia MMD
-                      entre las partículas actuales y muestras fijas del prior
-                      ν^∞.  Entrenamiento determinístico (sin ruido Langevin).
-                      Requiere prior_samples ≠ None.
-        use_sinkhorn: Adam + divergencia de Sinkhorn(partículas, prior_samples).
-                      Similar a use_mmd pero con transporte óptimo entrópico
-                      como regularizador.  Más sensible a la geometría del
-                      espacio de parámetros que MMD.
-                      Requiere prior_samples ≠ None.
-        prior_samples: (N, d) tensor — muestras de ν^∞ precomputadas.
-                      Generadas con sample_prior_langevin() en metrics.py.
-                      Se mueven automáticamente al dispositivo del modelo.
-        mmd_sigma   : ancho de banda del kernel MMD (None → heurística de la
-                      mediana calculada una vez antes del entrenamiento).
-        sinkhorn_blur: regularización del OT en Sinkhorn (default 0.05).
+        model         : MeanFieldResNet to train
+        X             : (N, d1) features (full batch)
+        y             : (N,) labels
+        epsilon       : ε, regularization weight and Langevin temperature
+        lr            : initial learning rate
+        n_epochs      : number of epochs
+        verbose       : print progress every 200 epochs
+        use_sgd       : SGD with constant lr, no noise (exp_c)
+        use_sgld      : pSGLD, Adam + preconditioned Langevin noise (exp_b, e, f)
+        use_mmd       : Adam + ε · MMD²(particles, prior_samples) instead of the
+                        L4 + L2 penalty; deterministic; needs prior_samples
+        use_sinkhorn  : Adam + ε · Sinkhorn divergence(particles, prior_samples);
+                        like use_mmd but with entropic optimal transport, more
+                        sensitive to the geometry of the parameter space;
+                        needs prior_samples
+        prior_samples : (N, d) precomputed samples of ν^∞ (sample_prior_langevin
+                        in metrics.py), moved to the model's device
+        mmd_sigma     : MMD kernel bandwidth (None: median heuristic, computed
+                        once before training)
+        sinkhorn_blur : entropic regularization of the Sinkhorn divergence
 
     Returns:
-        hist : dict con listas de métricas + 'J_star'
+        hist : dict of per-epoch metric lists, plus 'J_star'.
     """
     # ── Validación de argumentos ──────────────────────────────────────────────
     if (use_mmd or use_sinkhorn) and prior_samples is None:
-        raise ValueError("use_mmd y use_sinkhorn requieren prior_samples != None.")
+        raise ValueError("use_mmd and use_sinkhorn require prior_samples.")
     if sum([use_sgld, use_sgd, use_mmd, use_sinkhorn]) > 1:
-        raise ValueError("Solo un modo puede estar activo a la vez.")
+        raise ValueError("Only one training mode can be active at a time.")
 
     # ── Optimizador y scheduler ───────────────────────────────────────────────
     if use_sgd:
@@ -271,7 +262,7 @@ def train(model, X, y, epsilon,
         hist['accuracy'].append(acc)
 
         if verbose and (ep + 1) % 200 == 0:
-            print(f"    época {ep+1:4d} | J={lv:.4f} | BCE={lt:.4f} | "
+            print(f"    epoch {ep+1:4d} | J={lv:.4f} | BCE={lt:.4f} | "
                   f"reg={lr_val:.5f} | ‖∇J‖²={gn2:.3e} | acc={acc:.3f}")
 
     # Recalcular pl_ratio con J* GLOBAL (mínimo de toda la trayectoria de entrenamiento).
@@ -289,22 +280,18 @@ def train(model, X, y, epsilon,
 
 def mu_pl_estimate(hist):
     """
-    Estima conservadoramente la constante PL μ como el percentil 10 del ratio PL.
+    Conservative estimate of the PL constant μ: the 10th percentile of the PL ratio.
 
-    El ratio PL en cada época es ‖∇J‖²/(2(J−J*)).  Si la condición PL se cumple
-    con constante μ, este ratio debe ser ≥ μ en TODOS los epochs (por definición).
-    Por tanto, el estimador natural sería el mínimo.
+    The PL ratio at each epoch is ‖∇J‖²/(2(J − J*)).  If the PL inequality
+    holds with constant μ, the ratio is ≥ μ at every epoch, so the natural
+    estimator would be the minimum.  The minimum is very sensitive to numerical
+    outliers (when J ≈ J* the denominator is tiny), so the 10th percentile is
+    used instead: robust, and still conservative.
 
-    Sin embargo, el mínimo es muy sensible a outliers numéricos (e.g., cuando
-    J ≈ J* el denominador es tiny y el ratio explota o colapsa).  El percentil 10
-    es más robusto: descarta el 10% de los valores más bajos, protegiendo frente a
-    instantes de inestabilidad numérica, pero sigue siendo conservador respecto
-    al verdadero μ (no lo sobreestima sistemáticamente).
-
-    Se excluyen:
-      • NaN (cuando J−J* ≤ 1e-9, el modelo ya está en J*)
-      • Valores ≤ 0 (anomalías numéricas)
-      • Valores > 1e4 (explosiones de gradiente no capturadas por el clipping)
+    Excluded values:
+      • NaN (J − J* ≤ 1e-9, the model is already at J*)
+      • values ≤ 0 (numerical anomalies)
+      • values > 1e4 (gradient spikes not caught by clipping)
     """
     vals = [v for v in hist['pl_ratio']
             if not math.isnan(v) and 0 < v < 1e4]

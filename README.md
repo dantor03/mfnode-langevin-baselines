@@ -3,6 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2507.08486-b31b1b.svg)](https://arxiv.org/abs/2507.08486)
+[![CI](https://github.com/dantor03/mfnode-langevin-baselines/actions/workflows/ci.yml/badge.svg)](https://github.com/dantor03/mfnode-langevin-baselines/actions/workflows/ci.yml)
 
 Code by **Daniel Torres González** (ICMAT–CSIC, JAE Intro fellowship, 2026).
 
@@ -58,7 +59,13 @@ pip install -r requirements.txt
 python -m mfnode --experiment H              # one experiment
 python -m mfnode --experiment I --epochs 300 # override the number of epochs
 python -m mfnode                             # all experiments (slow)
+pytest                                       # tests (~1 min on a CPU)
 ```
+
+The tests check the building blocks: MMD² and the Sinkhorn divergence vanish on
+identical samples and grow with a shift, their gradients move the particles,
+ULA reproduces the moments of the prior, and short Adam, pSGLD, MMD and Sinkhorn
+training runs decrease the loss.
 
 Figures are written to `figures/`. Experiment J downloads California Housing
 through scikit-learn on first use.
@@ -73,11 +80,12 @@ mfnode/
   data.py         make_moons, make_circles
   experiments/    exp_a.py … exp_k.py
   main.py         command-line entry point
+tests/            pytest suite
 docs/             full write-up of the experiments and the mathematical setup (in Spanish)
 figures/          figures produced by the experiments
 ```
 
-Code comments and the documents in `docs/` are in Spanish.
+Docstrings are in English; inline comments, the experiment headers and the documents in `docs/` are in Spanish.
 
 ## Related repositories
 

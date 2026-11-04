@@ -1,7 +1,8 @@
 """
-mfnode — Paquete principal de la implementación Mean-Field Neural ODE.
+mfnode: particle implementation of the entropic mean-field Neural ODE.
 
-Aplicación de arXiv:2507.08486 (Daudin & Delarue, 2025) al dataset make_moons.
+Application of arXiv:2507.08486 (Daudin & Delarue, 2025) to make_moons,
+make_circles and California Housing.
 """
 
 from .config import SEED, DEVICE, OUTPUT_DIR, DARK_BG, PANEL_BG, TXT, GRID_C, COLORS_EPS, style_ax

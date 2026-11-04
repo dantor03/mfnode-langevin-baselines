@@ -8,7 +8,7 @@ matplotlib.use('Agg')  # noqa: E402
 
 warnings.filterwarnings('ignore')
 
-# ── Reproducibilidad y dispositivo ──────────────────────────────────────────
+# ── Reproducibility and device ──────────────────────────────────────────
 SEED = 42
 torch.manual_seed(SEED)
 np.random.seed(SEED)
@@ -22,10 +22,10 @@ else:
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR  = os.path.normpath(os.path.join(_SCRIPT_DIR, '..', 'figures'))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-print(f"✓ Dispositivo: {DEVICE}")
-print(f"✓ Figuras → {OUTPUT_DIR}")
+print(f"✓ Device: {DEVICE}")
+print(f"✓ Figures → {OUTPUT_DIR}")
 
-# ── Tema visual oscuro ───────────────────────────────────────────────────────
+# ── Dark plotting theme ───────────────────────────────────────────────────────
 DARK_BG   = '#0f0f1a'
 PANEL_BG  = '#1a1a2e'
 TXT       = '#e0e0e0'

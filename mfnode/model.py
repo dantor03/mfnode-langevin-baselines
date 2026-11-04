@@ -3,69 +3,67 @@ import torch.nn as nn
 
 
 # =============================================================================
-# § 2  CAMPO VECTORIAL PROTOTÍPICO  b(x, a) = σ(a₁·x + a₂)·a₀
+# § 2  PROTOTYPICAL VECTOR FIELD  b(x, a) = σ(a₁·x + a₂)·a₀
 #
-#  Paper, Ejemplo 1.1 (ec. 1.8):
+#  Paper, Example 1.1 (eq. 1.8):
 #      A = ℝ^{d₁} × ℝ^{d₁} × ℝ,    a = (a₀, a₁, a₂)
 #      b(x, a) = σ(a₁ · x + a₂) · a₀,     σ = tanh
 #
-#  Aquí d₁=2 (features ∈ ℝ²), a₀ ∈ ℝ², a₁ ∈ ℝ², a₂ ∈ ℝ.
-#  Es la "neurona prototípica": a₁·x+a₂ es una proyección lineal (pre-activación),
-#  σ(·) es la activación no lineal, y a₀ reescala la salida en ℝ^{d₁}.
+#  Here d₁ = 2 (features in ℝ²), a₀ ∈ ℝ², a₁ ∈ ℝ², a₂ ∈ ℝ.
+#  This is the "prototypical neuron": a₁·x + a₂ is a linear pre-activation,
+#  σ the nonlinearity, and a₀ rescales the output in ℝ^{d₁}.
 #
-#  Con M "partículas" (aproximación de ν_t por M muestras discretas aᵐ):
-#      F(x, t) = ∫_A b(x,a) dν_t(a) ≈ (1/M) Σₘ b(x, aᵐ(t))
+#  With M particles (ν_t approximated by M atoms aᵐ):
+#      F(x, t) = ∫_A b(x, a) dν_t(a) ≈ (1/M) Σₘ b(x, aᵐ(t))
 #              = (1/M) Σₘ σ(a₁ᵐ(t)·x + a₂ᵐ(t)) · a₀ᵐ(t)
 #
-#  Esto es una red neuronal de 1 capa oculta con M neuronas con parámetros
-#  que deberían variar libremente en t.  El paper optimiza sobre trayectorias
-#  arbitrarias (ν_t)_{t∈[0,T]}, lo que en M partículas equivale a optimizar
-#  M caminos aᵐ : [0,T] → A.
+#  This is a one-hidden-layer network with M neurons whose parameters should
+#  vary freely in t.  The paper optimizes over arbitrary curves (ν_t)_{t∈[0,T]},
+#  which with M particles means optimizing M paths aᵐ : [0, T] → A.
 #
-#  APROXIMACIÓN POR AUGMENTACIÓN TEMPORAL:
-#      En la implementación los pesos (W₁, W₀) son ESTÁTICOS y t se concatena
-#      al input, de modo que el campo efectivo es:
-#          F(x,t) = W₀ tanh(W₁[:,​:d₁] x + W₁[:,d₁] t + b₁)
-#      Esto equivale a restringir la familia de controles a aquellos donde
-#      a₀ᵐ y a₁ᵐ son CONSTANTES en t, y a₂ᵐ(t) = W₁[m,d₁]·t + b₁[m] varía
-#      linealmente.  El campo F(x,t) SÍ depende de t, pero la trayectoria
-#      de ν_t está restringida a esta familia paramétrica concreta.
+#  TIME AUGMENTATION:
+#      In the implementation the weights (W₁, W₀) are STATIC and t is
+#      concatenated to the input, so the effective field is
+#          F(x, t) = W₀ tanh(W₁[:, :d₁] x + W₁[:, d₁] t + b₁).
+#      This restricts the controls to a₀ᵐ and a₁ᵐ CONSTANT in t and
+#      a₂ᵐ(t) = W₁[m, d₁]·t + b₁[m] linear in t.  F(x, t) does depend on t,
+#      but the curve ν_t is restricted to this parametric family.
 #
-#  Implementación matricial:
-#      W₁ ∈ ℝ^{M×(d₁+1)} agrupa (a₁ᵐ, col_temporal) como filas
-#      W₀ ∈ ℝ^{M×d₁}     agrupa a₀ᵐ como filas
-#      h = σ( [x, t] @ W₁ᵀ + b₁ )   → (N, M)
-#      F = h @ W₀ᵀ / M               → (N, d₁)   ← /M absorbido en init
+#  Matrix form:
+#      W₁ ∈ ℝ^{M×(d₁+1)} stacks (a₁ᵐ, time column) as rows
+#      W₀ ∈ ℝ^{M×d₁}     stacks a₀ᵐ as rows
+#      h = σ([x, t] @ W₁ᵀ + b₁)   → (N, M)
+#      F = h @ W₀ᵀ / M             → (N, d₁)   (the 1/M is absorbed in the init)
 #
-#  Activación tanh: satisface la "propiedad discriminante" (sec. 1.2) que
-#  garantiza que el campo b(x,·) puede aproximar cualquier función continua.
+#  tanh satisfies the "discriminating property" (Sec. 1.2), which ensures
+#  that b(x, ·) can approximate any continuous function.
 #
-#  PENALIZACIÓN ENTRÓPICA (Assumption Regularity (i) y (ii)):
-#      ε · E(ν_t | ν^∞)   con   ν^∞ ∝ exp(-ℓ(a)),   ℓ(a) = c₁|a|⁴ + c₂|a|²
+#  ENTROPIC PENALTY (Assumption Regularity (i) and (ii)):
+#      ε · E(ν_t | ν^∞)   with   ν^∞ ∝ exp(-ℓ(a)),   ℓ(a) = c₁|a|⁴ + c₂|a|²
 #
-#  Por qué potencial CUÁRTICO (c₁|a|⁴):
-#      La condición "supercoercividad" exige que ∇²ℓ(a) ≥ c(1+|a|²)I,
-#      que c₂|a|² (cuadrático) NO cumple en solitario pero sí con c₁|a|⁴.
-#      Este crecimiento más rápido que cuadrático es lo que garantiza la
-#      desigualdad log-Sobolev para ν^∞, que a su vez implica la condición PL.
+#  Why a QUARTIC potential (c₁|a|⁴):
+#      the super-coercivity condition requires ∇²ℓ(a) ≥ c(1 + |a|²) I, which
+#      the quadratic term c₂|a|² alone does not satisfy but c₁|a|⁴ does.  This
+#      faster-than-quadratic growth gives the log-Sobolev inequality for ν^∞,
+#      which in turn implies the PL condition.
 # =============================================================================
 class MeanFieldVelocity(nn.Module):
     """
-    Campo vectorial prototípico del paper (ec. 1.8) aproximado con M partículas.
+    Prototypical vector field of the paper (eq. 1.8) approximated with M particles.
 
-    Implementa F(x,t) = (1/M) Σₘ σ(a₁ᵐ(t)·x + a₂ᵐ(t)) · a₀ᵐ(t), que es el
-    campo vectorial efectivo que mueve las features según la ecuación de control:
-        dX_t/dt = F(X_t, t)
+    Implements F(x, t) = (1/M) Σₘ σ(a₁ᵐ(t)·x + a₂ᵐ(t)) a₀ᵐ(t), the effective
+    field that moves the features through the control equation
+        dX_t/dt = F(X_t, t).
 
-    La dependencia temporal a(t) se codifica augmentando el input con el escalar t.
-    Esto corresponde a parámetros que varían suavemente con el "tiempo de red",
-    análogamente a una Neural ODE con parámetros compartidos entre capas.
+    The time dependence a(t) is encoded by augmenting the input with the
+    scalar t, i.e. parameters that vary smoothly with the network time, as in a
+    Neural ODE with weights shared across layers.
 
-    Atributos:
-        d1  : dimensión del espacio de features (d₁=2 para make_moons)
-        M   : número de "partículas" que aproximan la medida de control ν_t
-        W1  : matriz de pesos [d₁+1 → M] — codifica (a₁ᵐ, a₂ᵐ) para m=1..M
-        W0  : matriz de pesos [M → d₁]  — codifica a₀ᵐ para m=1..M
+    Attributes:
+        d1  : dimension of the feature space (d₁ = 2 for make_moons)
+        M   : number of particles approximating the control measure ν_t
+        W1  : weights [d₁+1 → M], encode (a₁ᵐ, a₂ᵐ) for m = 1..M
+        W0  : weights [M → d₁], encode a₀ᵐ for m = 1..M
     """
 
     def __init__(self, d1: int = 2, M: int = 64,
@@ -91,14 +89,23 @@ class MeanFieldVelocity(nn.Module):
             # con layout [a0 (d1), a1 (d1), a2 (1)] (mismo orden que A_grid).
             # Usado para: muestreo categórico de ν*_T (Thm 1.4), muestreo
             # Gaussiano N(0, Cov[ν*_T]), o cualquier otra distribución diseñada.
-            # NOTA: E[ν*_T] = 0 por simetría exacta a↔-a del campo
+    # NOTE: restriction of the control space with respect to the paper.
+    #   The paper optimizes over arbitrary curves a^m : [0, T] → A, i.e. the
+    #   control ν_t can be any continuous curve of measures.  This
+    #   implementation restricts it to
+    #       • a₀ᵐ ∈ ℝ²  constant in t  (fixed output weights)
+    #       • a₁ᵐ ∈ ℝ²  constant in t  (fixed input weights)
+    #       • a₂ᵐ(t) = W₁[m, 2]·t + b₁[m]  linear in t  (only the bias varies)
+    #   a strict subset of the continuous mean-field controls.  The guarantees
+    #   of the paper hold on the full space; here they are tested empirically
+    #   on this subspace.
             # b(x,a)=tanh(a₁·x+a₂)·a₀, así que init "todas las neuronas en E[a]"
             # equivale a init en origen — usar este parámetro con muestras
             # individuales, no con una sola media broadcast.
             wn = torch.as_tensor(warm_start_neurons, dtype=torch.float32)
             assert wn.shape == (M, 2 * d1 + 1), (
-                f"warm_start_neurons debe tener shape ({M}, {2*d1+1}), "
-                f"recibido {tuple(wn.shape)}"
+                f"warm_start_neurons must have shape ({M}, {2*d1+1}), "
+                f"got {tuple(wn.shape)}"
             )
             a0 = wn[:, :d1]               # (M, d1)
             a1 = wn[:, d1:2 * d1]         # (M, d1)
@@ -127,20 +134,18 @@ class MeanFieldVelocity(nn.Module):
 
     def forward(self, t: float, x: torch.Tensor) -> torch.Tensor:
         """
-        Evalúa el campo vectorial efectivo F(x, t).
+        Evaluate the effective vector field F(x, t).
 
-        Calcula F(x,t) = (1/M) Σₘ σ(a₁ᵐ·x + a₂ᵐ) · a₀ᵐ para N puntos
-        simultáneamente en forma matricial.  Este valor es la VELOCIDAD
-        con la que la ODE mueve cada feature x en el tiempo t.
+        Computes F(x, t) = (1/M) Σₘ σ(a₁ᵐ·x + a₂ᵐ) a₀ᵐ for N points at once.  This
+        is the VELOCITY with which the ODE moves each feature x at time t.
 
         Args:
-            t : tiempo normalizado ∈ [0, 1].  Se broadcast a todos los N puntos.
-            x : (N, d1) — componente de features de los N puntos de γ_t;
-                           cada "partícula" de γ_t es el par (x, y), pero F
-                           solo actúa sobre x (la etiqueta y viaja fija)
+            t : normalized time in [0, 1], broadcast to the N points.
+            x : (N, d1) feature component of the N points of γ_t; each particle of
+                γ_t is a pair (x, y), but F only acts on x (the label is carried along)
 
         Returns:
-            (N, d1) — velocidad dX/dt en cada uno de los N puntos
+            (N, d1) velocity dX/dt at each of the N points.
         """
         t_val = t.item() if torch.is_tensor(t) else float(t)
         # Construir input aumentado [x, t] ∈ ℝ^{d₁+1} para cada punto
@@ -153,42 +158,37 @@ class MeanFieldVelocity(nn.Module):
 
     def entropic_penalty(self, c1: float = 0.05, c2: float = 0.5) -> torch.Tensor:
         """
-        Aproximación de la penalización entrópica ε · E(ν_t | ν^∞).
+        Approximation of the entropic penalty ε · E(ν_t | ν^∞).
 
-        TEORÍA (paper):
+        THEORY (paper):
             E(ν_t | ν^∞) = KL(ν_t || ν^∞) = ∫ log(dν_t/dν^∞) dν_t
-                          = E_{ν_t}[ℓ(a)] − H(ν_t)
-            donde ℓ(a) = c₁|a|⁴ + c₂|a|² y H(ν_t) = −∫log(dν_t)dν_t es la
-            entropía diferencial de ν_t.
+                         = E_{ν_t}[ℓ(a)] − H(ν_t),
+            with ℓ(a) = c₁|a|⁴ + c₂|a|² and H(ν_t) the differential entropy of ν_t.
 
-        LIMITACIÓN DE LA IMPLEMENTACIÓN:
-            Los parámetros son estimadores PUNTUALES (deterministicos), por lo
-            que ν_t = (1/M) Σₘ δ_{θₘ} es una suma de deltas de Dirac.  La
-            entropía diferencial de una medida discreta es −∞ respecto a un
-            prior continuo → la KL completa es técnicamente +∞.
+        LIMITATION OF THE IMPLEMENTATION:
+            The parameters are point estimates, so ν_t = (1/M) Σₘ δ_{θₘ} is a sum
+            of Dirac masses.  Its differential entropy relative to a continuous
+            prior is −∞, so the full KL is +∞.
 
-            Solo es accesible el TÉRMINO DE ENERGÍA:
-                E_{ν_t}[ℓ(a)] ≈ (1/N_params) Σⱼ [c₁ θⱼ⁴ + c₂ θⱼ²]
+            Only the ENERGY TERM is accessible:
+                E_{ν_t}[ℓ(a)] ≈ (1/N_params) Σⱼ [c₁ θⱼ⁴ + c₂ θⱼ²],
+            which is a polynomial (L4 + L2) weight decay.  It provides the energy
+            of the prior ν^∞ ∝ exp(−ℓ(a)), but not the entropy term −H(ν_t).
 
-            Esta aproximación es equivalente a regularización L4+L2 (weight
-            decay polinomial).  Proporciona el PRIOR ENERGÉTICO ν^∞ ∝ exp(−ℓ(a))
-            del término de energía de la KL, pero no el término de entropía −H(ν_t).
+            The full entropic regularization requires exploring the Gibbs measure
+            ν_t* ∝ exp(−J(θ)/ε).  This is done with pSGLD (train.py, use_sgld=True):
+                θ ← θ − η ∇J(θ) + √(2ηε) ξ,   ξ ~ N(0, I);
+            the Langevin noise supplies the entropy term −H(ν_t) of the KL, while
+            this energy term plays the role of the prior ν^∞.
 
-            La verdadera regularización entrópica (KL completa) requiere explorar
-            la distribución de Gibbs ν_t* ∝ exp(−J(θ)/ε).  Esto se implementa en
-            los experimentos B, E y F mediante SGLD (ver train.py, use_sgld=True):
-                θ ← θ − η·∇J(θ) + √(2·η·ε)·ξ,   ξ ~ N(0, I)
-            El ruido de Langevin proporciona el término entrópico −H(ν_t) de la KL,
-            mientras que este término de energía actúa como el prior ν^∞.
-
-        Elección de hiperparámetros (Assumption Regularity (i)):
-            c₁ = 0.05 — término cuártico (supercoercividad: garantiza log-Sobolev)
-            c₂ = 0.5  — término cuadrático (convexidad básica)
-        El término c₁|a|⁴ es ESENCIAL: c₂|a|² solo garantiza convexidad
-        cuadrática (L2), pero no la desigualdad log-Sobolev que implica PL.
+        Hyperparameters (Assumption Regularity (i)):
+            c₁ = 0.05, quartic term (super-coercivity, gives a log-Sobolev inequality)
+            c₂ = 0.5,  quadratic term (basic convexity)
+        The quartic term is ESSENTIAL: c₂|a|² alone gives quadratic convexity but
+        not the log-Sobolev inequality that implies PL.
 
         Returns:
-            Escalar — término de energía medio por parámetro (aprox. de KL)
+            Scalar, mean energy per parameter (approximation of the KL).
         """
         pen, n = torch.tensor(0.0, device=next(self.parameters()).device), 0
         for p in self.parameters():
@@ -198,47 +198,45 @@ class MeanFieldVelocity(nn.Module):
 
 
 # =============================================================================
-# § 3  MEAN-FIELD RESNET — Neural ODE en espacio de features ℝ^{d₁}
+# § 3  MEAN-FIELD RESNET: Neural ODE in the feature space ℝ^{d₁}
 #
-#  Implementa el sistema de control óptimo del paper:
+#  Implements the optimal control system of the paper:
 #
-#      ┌─ ODE de transporte (ec. 1.3/1.5):
+#      ┌─ Transport ODE (eqs. 1.3/1.5):
 #      │   dX_t/dt = F(X_t, t) = ∫_A b(X_t, a) dν_t(a),   t ∈ [0, T]
-#      │   X_0 = dato de entrada ∈ ℝ^{d₁}
-#      │   γ_t = distribución de X_t dado (X_0, Y_0)  (ec. 1.5)
+#      │   X_0 = input ∈ ℝ^{d₁}
+#      │   γ_t = law of X_t given (X_0, Y_0)  (eq. 1.5)
 #      │
-#      └─ Clasificador lineal (coste terminal):
-#          logit = W · X_T + b  →  P(y=1|X_T) = σ(logit)
-#          L(x, y) = BCE(W·x + b, y)   (coste terminal del problema de control)
+#      └─ Linear classifier (terminal cost):
+#          logit = W · X_T + b  →  P(y = 1 | X_T) = σ(logit)
+#          L(x, y) = BCE(W·x + b, y)
 #
-#  POR QUÉ ESPACIO ORIGINAL ℝ² (sin embedding):
-#      En el paper, γ_t ∈ P(ℝ^{d₁} x ℝ^{d}) — la distribución vive en el mismo espacio
-#      que los datos. Si embeddiéramos x ∈ ℝ² → h ∈ ℝ^H, la ODE correría en ℝ^H
-#      y γ_t sería no visualizable, alejándose del setup teórico.
+#  WHY THE ORIGINAL SPACE ℝ² (no embedding):
+#      In the paper γ_t ∈ P(ℝ^{d₁} × ℝ^{d}) lives in the same space as the
+#      data.  Embedding x ∈ ℝ² → h ∈ ℝ^H would run the ODE in ℝ^H, make γ_t
+#      impossible to visualize and move away from the theoretical setting.
 #
-#  INTEGRACIÓN RK4 vs EULER:
-#      El paper trabaja con el flujo continuo (tiempo continuo), cuya
-#      discretización más fiel es RK4.
-#        • Euler: error local O(dt²), error GLOBAL acumulado O(dt)
-#        • RK4:   error local O(dt⁵), error GLOBAL acumulado O(dt⁴)
-#      Con dt = T/n_steps = 0.1:
-#        • Error global RK4  ~ dt⁴ = 10⁻⁴  (cuatro órdenes de magnitud)
-#        • Error global Euler ~ dt  = 10⁻¹
-#      Las 4 evaluaciones del campo por paso (k1..k4) capturan mejor
-#      la curvatura del flujo sin aumentar el número de pasos.
+#  RK4 vs EULER:
+#      The paper works with the continuous-time flow, whose most faithful
+#      discretization here is RK4.
+#        • Euler: local error O(dt²), global error O(dt)
+#        • RK4:   local error O(dt⁵), global error O(dt⁴)
+#      With dt = T/n_steps = 0.1 the global error is ~1e-4 for RK4 and ~1e-1
+#      for Euler: the four evaluations per step (k1..k4) capture the
+#      curvature of the flow without more steps.
 # =============================================================================
 class MeanFieldResNet(nn.Module):
     """
-    Neural ODE de campo medio que transforma γ_0 (make_moons) en γ_T (separable).
+    Mean-field Neural ODE that transports γ_0 (e.g. make_moons) to a separable γ_T.
 
-    La "red" no tiene capas fijas sino un flujo continuo parametrizado:
-        X_0 → [ODE: dX/dt = F(X,t)] → X_T → [lineal] → logit → P(y=1)
+    The network has no fixed layers but a continuous parametrized flow:
+        X_0 → [ODE: dX/dt = F(X, t)] → X_T → [linear] → logit → P(y = 1).
 
-    Atributos:
-        velocity   : MeanFieldVelocity — el campo vectorial F(x,t)
-        classifier : nn.Linear(d1,1)  — clasificador lineal sobre X_T
-        T          : horizonte temporal de la ODE (por defecto T=1.0)
-        n_steps    : número de pasos RK4 para discretizar [0,T]
+    Attributes:
+        velocity   : MeanFieldVelocity, the vector field F(x, t)
+        classifier : nn.Linear(d1, 1), linear read-out on X_T
+        T          : time horizon of the ODE (default T = 1.0)
+        n_steps    : number of RK4 steps on [0, T]
     """
 
     def __init__(self, d1: int = 2, M: int = 64, T: float = 1.0,
@@ -274,27 +272,27 @@ class MeanFieldResNet(nn.Module):
     #   campo medio continuo.  Las garantías teóricas del paper valen en el
     #   espacio completo; aquí se verifican empíricamente en este subespacio.
 
-    # ── Integrador RK4 ───────────────────────────────────────────────────────
+    # ── RK4 integrator ───────────────────────────────────────────────────────
     def _rk4(self, t_norm: float, x: torch.Tensor, dt: float) -> torch.Tensor:
         """
-        Avanza un paso de la ODE dX/dt = F(X,t) usando el método de Runge-Kutta 4.
+        One Runge–Kutta 4 step of dX/dt = F(X, t).
 
-        El método RK4 evalúa el campo en 4 puntos intermedios (k1..k4) y combina
-        con pesos [1,2,2,1]/6 para obtener error local O(dt⁵) [global O(dt⁴)]
-        frente a error local O(dt²) [global O(dt)] de Euler:
-            k1 = F(x,         t)
-            k2 = F(x + dt/2·k1, t+dt/2)
-            k3 = F(x + dt/2·k2, t+dt/2)
-            k4 = F(x + dt·k3,   t+dt)
+        RK4 evaluates the field at four intermediate points and combines them with
+        weights [1, 2, 2, 1]/6, with local error O(dt⁵) (global O(dt⁴)) against
+        O(dt²) (global O(dt)) for Euler:
+            k1 = F(x,            t)
+            k2 = F(x + dt/2·k1,  t + dt/2)
+            k3 = F(x + dt/2·k2,  t + dt/2)
+            k4 = F(x + dt·k3,    t + dt)
             x_new = x + (dt/6)(k1 + 2k2 + 2k3 + k4)
 
         Args:
-            t_norm : tiempo normalizado al inicio del paso, ∈ [0, 1)
-            x      : (N, d1) — posiciones actuales de los N puntos
-            dt     : tamaño del paso normalizado (= 1/n_steps)
+            t_norm : normalized time at the start of the step, in [0, 1)
+            x      : (N, d1) current positions of the N points
+            dt     : normalized step size (= 1/n_steps)
 
         Returns:
-            (N, d1) — posiciones después del paso
+            (N, d1) positions after the step.
         """
         k1 = self.velocity(t_norm,        x)
         k2 = self.velocity(t_norm + dt/2, x + dt/2 * k1)
@@ -305,26 +303,22 @@ class MeanFieldResNet(nn.Module):
     def integrate(self, x0: torch.Tensor,
                   return_trajectory: bool = False):
         """
-        Integra la ODE dX/dt = F(X,t) desde t=0 hasta t=T.
+        Integrate dX/dt = F(X, t) from t = 0 to t = T.
 
-        Cada paso avanza el "tiempo de red" en dt=T/n_steps.  Al final,
-        X_T es la representación aprendida de los features que el clasificador
-        lineal puede separar.
-
-        Internamente el tiempo se normaliza a [0,1] para que la velocidad
-        F(x, t_norm) sea independiente de T (facilita la generalización a
-        distintos horizontes T).
+        Each step advances the network time by dt = T/n_steps.  X_T is the learned
+        representation of the features, which the linear classifier separates.
+        Time is normalized to [0, 1] internally, so that F(x, t_norm) does not
+        depend on T.
 
         Args:
-            x0               : (N, d1) — features iniciales (= puntos de γ_0)
-            return_trajectory: si True, guarda snapshots intermedios de γ_t.
-                               Útil para visualizar la evolución de las features.
+            x0                : (N, d1) initial features (the points of γ_0)
+            return_trajectory : if True, also return the intermediate states of γ_t
+                                (to visualize the evolution of the features)
 
         Returns:
-            Si return_trajectory=False: x_T (N, d1)
-            Si return_trajectory=True : (x_T, traj) donde
-                traj = [(t_real, x_t_detached)] con t_real ∈ {0, T/n, 2T/n, …, T}
-                Los tensores en traj están detachados del grafo para ahorrar memoria.
+            x_T (N, d1) if return_trajectory is False; otherwise (x_T, traj) with
+            traj = [(t_real, x_t)] for t_real in {0, T/n, 2T/n, …, T}, the tensors
+            in traj detached from the graph.
         """
         x  = x0.clone()
         dt = 1.0 / self.n_steps       # paso normalizado ∈ [0,1]
@@ -340,35 +334,32 @@ class MeanFieldResNet(nn.Module):
         return (x, traj) if return_trajectory else x
 
     def forward(self, x0: torch.Tensor) -> torch.Tensor:
-        """Integra la ODE y aplica el clasificador lineal sobre X_T."""
+        """Integrate the ODE and apply the linear classifier to X_T (returns logits)."""
         x_T = self.integrate(x0)
         return self.classifier(x_T).squeeze(-1)   # (N,) — logits sin activar
 
     def compute_loss(self, x0, y, epsilon: float = 0.01):
         """
-        Calcula el coste total J del problema de control (ec. 1.6 del paper):
+        Total cost J of the control problem (eq. 1.6 of the paper):
 
-            J(γ_0, ν) = ∫ L(x,y) dγ_T(x,y)   ←— coste terminal (BCE)
-                      + ε · ∫₀ᵀ E(ν_t | ν^∞) dt  ←— penalización entrópica
+            J(γ_0, ν) = ∫ L(x, y) dγ_T(x, y)          terminal cost (BCE or MSE)
+                      + ε ∫₀ᵀ E(ν_t | ν^∞) dt          entropic penalty
 
-        El primer término mide qué tan bien clasifica el modelo.
-        El segundo término penaliza cuánto se aleja ν_t del prior ν^∞,
-        lo que REGULARIZA el espacio de parámetros y garantiza (con ε>0)
-        la condición log-Sobolev → PL → convergencia exponencial.
-
-        Nota: en la aproximación de M partículas, ∫ E(ν_t|ν^∞) dt se
-        aproxima como la penalización del potencial ℓ evaluado en los
-        parámetros aprendidos θ (los "M puntos de soporte" de ν_t).
+        The first term measures the fit; the second penalizes how far ν_t is from
+        the prior ν^∞, which regularizes the parameters and, for ε > 0, gives the
+        log-Sobolev → PL → exponential convergence chain.  With M particles the
+        entropic term is approximated by the potential ℓ evaluated at the learned
+        parameters (see entropic_penalty).
 
         Args:
-            x0      : (N, d1) — features de entrada
-            y       : (N,) — etiquetas {0,1}
-            epsilon : coeficiente de regularización entrópica (ε ≥ 0)
+            x0      : (N, d1) input features
+            y       : (N,) labels in {0, 1} (or targets for regression)
+            epsilon : entropic regularization coefficient (ε ≥ 0)
 
         Returns:
-            loss_total : J (tensor con grafo de cómputo para autograd)
-            loss_term  : BCE puro (float) — componente de clasificación
-            loss_reg   : penalización entrópica (float) — componente de regularización
+            loss_total : J (tensor with graph, for autograd)
+            loss_term  : terminal cost (float)
+            loss_reg   : entropic penalty (float)
         """
         pred      = self.forward(x0)
         if self.task == 'regression':

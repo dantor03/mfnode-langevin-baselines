@@ -1,21 +1,21 @@
 """
-metrics.py — Métricas para diagnosticar y regularizar con ν_N vs ν^∞.
+metrics.py: metrics to diagnose and regularize ν_N against the prior ν^∞.
 
-Dado que ν_N = (1/M)Σ δ_{a^m} es discreta y el prior ν^∞ es continuo,
-KL(ν_N||ν^∞) = +∞.  Este módulo implementa alternativas bien definidas:
+Since ν_N = (1/M) Σ δ_{a^m} is discrete and the prior ν^∞ is continuous,
+KL(ν_N || ν^∞) = +∞.  This module implements well-defined alternatives:
 
-  DIAGNÓSTICO (sin grafo de cómputo):
-    extract_particles        : extrae los M vectores de parámetros (M, 5)
-    mmd_rbf                  : MMD² con kernel Gaussiano (ancho = mediana)
-    wasserstein_1d           : W₁ exacta en 1D via scipy
-    sample_prior_langevin    : muestras de ν^∞ ∝ exp(-ℓ(a)) por ULA
-    collect_psgld_snapshots  : continúa pSGLD y recoge trayectoria de partículas
+  DIAGNOSTICS (no computational graph):
+    extract_particles        : the M parameter vectors, shape (M, 5)
+    mmd_rbf                  : unbiased MMD² with a Gaussian kernel (median bandwidth)
+    wasserstein_1d           : exact 1D Wasserstein-1 via scipy
+    sample_prior_langevin    : samples of ν^∞ ∝ exp(-ℓ(a)) by ULA
+    collect_psgld_snapshots  : continues pSGLD and records the particle trajectory
 
-  ENTRENAMIENTO (con grafo de cómputo, diferenciables respecto a partículas):
-    particles_live           : extrae partículas CON grad (para usar como loss)
-    compute_mmd_sigma        : heurística de la mediana para ancho de banda
-    mmd_loss_train           : MMD²(partículas, prior) diferenciable
-    sinkhorn_loss            : divergencia de Sinkhorn (OT entrópico) diferenciable
+  TRAINING (differentiable with respect to the particles):
+    particles_live           : particles WITH gradient (to be used inside a loss)
+    compute_mmd_sigma        : median heuristic for the kernel bandwidth
+    mmd_loss_train           : differentiable MMD²(particles, prior)
+    sinkhorn_loss            : differentiable debiased Sinkhorn divergence (entropic OT)
 """
 
 import copy
@@ -27,23 +27,23 @@ import torch.optim as optim
 
 
 # =============================================================================
-# Extracción de partículas
+# Particle extraction
 # =============================================================================
 
 def extract_particles(model):
     """
-    Extrae los M vectores de parámetros por neurona: a^m = (a₀^m, a₁^m, a₂^m).
+    Return the M per-neuron parameter vectors a^m = (a₀^m, a₁^m, a₂^m).
 
-    Mapeado desde la estructura de MeanFieldVelocity:
-        W0.weight : (d1, M)    — columna m = a₀^m ∈ ℝ^{d1}
-        W1.weight : (M, d1+1)  — fila m, primeras d1 cols = a₁^m ∈ ℝ^{d1}
-        W1.bias   : (M,)       — a₂^m ∈ ℝ  (bias / umbral por neurona)
+    Mapping from the layout of MeanFieldVelocity:
+        W0.weight : (d1, M)    column m = a₀^m ∈ ℝ^{d1}
+        W1.weight : (M, d1+1)  row m, first d1 columns = a₁^m ∈ ℝ^{d1}
+        W1.bias   : (M,)       a₂^m ∈ ℝ (per-neuron bias)
 
-    Nota: W1.weight[:, d1] es el peso de la codificación temporal (artefacto
-    de la augmentación t → no forma parte del espacio A del paper).
+    Note: W1.weight[:, d1] is the weight of the time input (an artefact of the
+    time augmentation), not part of the space A of the paper.
 
     Returns:
-        (M, 2*d1+1) tensor en CPU — coordenadas de las M partículas
+        (M, 2*d1+1) CPU tensor with the coordinates of the M particles.
     """
     d1 = model.velocity.d1
     a0 = model.velocity.W0.weight.T.detach().cpu()           # (M, d1)
@@ -53,22 +53,22 @@ def extract_particles(model):
 
 
 # =============================================================================
-# MMD² con kernel Gaussiano
+# MMD² with a Gaussian kernel
 # =============================================================================
 
 def mmd_rbf(X, Y, sigma=None):
     """
-    Estimador no sesgado de MMD² entre muestras X (N, d) e Y (M, d).
+    Unbiased estimator of MMD² between samples X (N, d) and Y (M, d).
 
-    Kernel:  k(x, y) = exp(−‖x−y‖² / (2σ²))
-    sigma=None → heurística de la mediana sobre el pool X∪Y.
+    Kernel:  k(x, y) = exp(−‖x−y‖² / (2σ²)).
+    sigma=None uses the median heuristic on the pooled sample X ∪ Y.
 
-    El estimador no sesgado descarta los términos diagonales de Kxx y Kyy:
-        MMD² = E[k(x,x')] − 2E[k(x,y)] + E[k(y,y')]
-    con la corrección 1/(n(n-1)) en lugar de 1/n².
+    The unbiased estimator drops the diagonal terms of Kxx and Kyy:
+        MMD² = E[k(x,x')] − 2 E[k(x,y)] + E[k(y,y')]
+    with the normalization 1/(n(n−1)) instead of 1/n².
 
     Returns:
-        float — MMD² estimado (puede ser ligeramente negativo con n, m pequeños)
+        float, the estimated MMD² (can be slightly negative for small n, m).
     """
     if not isinstance(X, torch.Tensor):
         X = torch.tensor(X, dtype=torch.float32)
@@ -103,22 +103,20 @@ def mmd_rbf(X, Y, sigma=None):
 
 
 # =============================================================================
-# Wasserstein-1 en 1D (exacto)
+# Exact 1D Wasserstein-1
 # =============================================================================
 
 def wasserstein_1d(x, y):
     """
-    Distancia de Wasserstein-1 exacta para distribuciones univariadas.
+    Exact Wasserstein-1 distance between two univariate samples.
 
-    W₁(P, Q) = ∫|F_P(t) − F_Q(t)| dt = media de |x_(i) − y_(j)| (CDF empíricas)
-
-    Usa scipy.stats.wasserstein_distance, que implementa esto exactamente
-    a coste O(n log n) por ordenamiento.
+    W₁(P, Q) = ∫ |F_P(t) − F_Q(t)| dt with the empirical CDFs, computed by
+    scipy.stats.wasserstein_distance in O(n log n).
 
     Args:
-        x, y: tensores 1D o arrays
+        x, y: 1D tensors or arrays.
     Returns:
-        float — W₁
+        float, W₁.
     """
     from scipy.stats import wasserstein_distance
     if torch.is_tensor(x):
@@ -129,36 +127,35 @@ def wasserstein_1d(x, y):
 
 
 # =============================================================================
-# Muestreo del prior ν^∞ por Langevin MCMC no ajustado (ULA)
+# Sampling the prior ν^∞ with the unadjusted Langevin algorithm (ULA)
 # =============================================================================
 
 def sample_prior_langevin(n_samples, dim=5,
                            n_burnin=5_000, thin=20, step=0.01):
     """
-    Genera muestras de ν^∞ ∝ exp(−ℓ(a)) por ULA (Langevin MCMC).
+    Draw samples of ν^∞ ∝ exp(−ℓ(a)) with the unadjusted Langevin algorithm (ULA).
 
-    El prior ν^∞ es fijo e independiente de ε.  La temperatura ε solo
-    escala el peso del término KL en la pérdida, no la forma del prior.
+    The prior ν^∞ is fixed and independent of ε: the temperature ε only scales
+    the weight of the entropic term in the loss, not the shape of the prior.
 
-    Potencial:  ℓ(a) = c₁ Σⱼ aⱼ⁴ + c₂ Σⱼ aⱼ²    (c₁=0.05, c₂=0.5)
-    Fuerza:    −∇ℓ(a) = −(4c₁ a³ + 2c₂ a)          (elemento a elemento)
+    Potential:  ℓ(a) = c₁ Σⱼ aⱼ⁴ + c₂ Σⱼ aⱼ²    (c₁ = 0.05, c₂ = 0.5)
+    Drift:      −∇ℓ(a) = −(4c₁ a³ + 2c₂ a)        (componentwise)
 
-    Actualización ULA:
-        a ← a − η · ∇ℓ(a) + √(2η) · ξ,   ξ ~ N(0, I)
+    ULA update (Euler–Maruyama step of the Langevin SDE):
+        a ← a − η ∇ℓ(a) + √(2η) ξ,   ξ ~ N(0, I)
 
-    La distribución estacionaria del SDE continuo es exp(−ℓ(a)).  ULA
-    introduce un sesgo O(η) que se controla con `step` pequeño y `thin`
-    grande (sub-muestreo).
+    The continuous-time SDE has stationary law exp(−ℓ(a)); ULA adds an O(η)
+    bias, kept small with a small `step` and thinning.
 
     Args:
-        n_samples : número de muestras a devolver
-        dim       : dimensión del espacio A (2*d1+1 = 5 para d1=2)
-        n_burnin  : pasos de burn-in descartados
-        thin      : devuelve 1 de cada `thin` pasos tras burn-in
-        step      : tamaño de paso η (ULA); L(∇ℓ) ≈ 2c₂ = 1.0 → step ≪ 2
+        n_samples : number of samples returned
+        dim       : dimension of A (2*d1+1 = 5 for d1 = 2)
+        n_burnin  : burn-in steps discarded
+        thin      : keep one of every `thin` steps after burn-in
+        step      : step size η; Lip(∇ℓ) ≈ 2c₂ = 1 near the origin, so step ≪ 2
 
     Returns:
-        (n_samples, dim) tensor CPU
+        (n_samples, dim) CPU tensor.
     """
     c1, c2    = 0.05, 0.5
     a         = torch.randn(dim) * 0.3
@@ -176,35 +173,32 @@ def sample_prior_langevin(n_samples, dim=5,
 
 
 # =============================================================================
-# Snapshots de trayectoria pSGLD post-entrenamiento
+# pSGLD trajectory snapshots after training
 # =============================================================================
 
 def collect_psgld_snapshots(model, X, y, epsilon,
                              n_steps=2_000, thin=10, lr=1e-3):
     """
-    Continúa pSGLD desde el estado actual del modelo y recoge snapshots
-    de las posiciones de las M partículas.
+    Continue pSGLD from the current model and record snapshots of the M particles.
 
-    Opera sobre una copia profunda del modelo: el modelo original no se modifica.
+    Works on a deep copy: the model passed in is not modified.
 
-    Tras la convergencia del entrenamiento, la cadena pSGLD está (aproximadamente)
-    en régimen estacionario.  El conjunto de snapshots acumulados aproxima la
-    distribución tiempo-promedio ν̂*, que por el teorema ergódico converge a la
-    distribución estacionaria ν* ∝ exp(−J(θ)/ε).
-
-    Se usa un lr fijo (no cosine-annealing) para mantener temperatura constante
-    durante el muestreo.
+    After training, the pSGLD chain is approximately stationary.  The pooled
+    snapshots approximate the time-averaged distribution ν̂*, which by the
+    ergodic theorem converges to the stationary law ν* ∝ exp(−J(θ)/ε).
+    A fixed learning rate (no cosine annealing) keeps the temperature constant
+    during sampling.
 
     Args:
-        model    : MeanFieldResNet ya entrenado (no se modifica)
-        X, y     : datos de entrenamiento (necesarios para evaluar ∇J)
-        epsilon  : temperatura pSGLD (misma ε del entrenamiento)
-        n_steps  : número de pasos pSGLD adicionales
-        thin     : guarda 1 de cada `thin` pasos
-        lr       : learning rate fijo para la fase de muestreo
+        model    : trained MeanFieldResNet (not modified)
+        X, y     : training data (needed to evaluate ∇J)
+        epsilon  : pSGLD temperature (the ε used in training)
+        n_steps  : number of additional pSGLD steps
+        thin     : keep one of every `thin` steps
+        lr       : fixed learning rate of the sampling phase
 
     Returns:
-        (n_steps // thin, M, dim) tensor CPU — trayectoria de partículas
+        (n_steps // thin, M, dim) CPU tensor, the particle trajectory.
     """
     m_copy = copy.deepcopy(model).to(X.device)
     m_copy.train()
@@ -244,19 +238,19 @@ def collect_psgld_snapshots(model, X, y, epsilon,
 
 
 # =============================================================================
-# Funciones de entrenamiento diferenciables
+# Differentiable training losses
 # =============================================================================
 
 def particles_live(model):
     """
-    Extrae los M vectores de parámetros CON grafo de cómputo.
+    Return the M parameter vectors WITH the computational graph.
 
-    Igual que extract_particles() pero SIN .detach(), de modo que los
-    gradientes fluyen hacia W0, W1 y bias de MeanFieldVelocity.
-    Usar únicamente dentro del bucle de entrenamiento como parte del loss.
+    Same as extract_particles() but without .detach(), so that gradients flow
+    to W0, W1 and the bias of MeanFieldVelocity.  Use only inside the training
+    loop, as part of the loss.
 
     Returns:
-        (M, 2*d1+1) tensor en el dispositivo del modelo — CON grad
+        (M, 2*d1+1) tensor on the model's device, with gradient.
     """
     d1 = model.velocity.d1
     a0 = model.velocity.W0.weight.T           # (M, d1) — CON grad
@@ -267,18 +261,17 @@ def particles_live(model):
 
 def compute_mmd_sigma(particles, prior_samples):
     """
-    Heurística de la mediana para el ancho de banda σ del kernel Gaussiano.
+    Median heuristic for the bandwidth σ of the Gaussian kernel.
 
-    Calcula la mediana de todas las distancias inter-muestras en el pool
-    (partículas ∪ prior).  Se usa una vez antes del entrenamiento y se
-    mantiene fijo durante todo el entrenamiento para que el paisaje de loss
-    sea estacionario.
+    Median of all pairwise distances in the pooled sample (particles ∪ prior).
+    It is computed once before training and kept fixed, so that the loss
+    landscape does not change during training.
 
     Args:
-        particles     : (M, d) tensor (puede estar en cualquier dispositivo)
-        prior_samples : (N, d) tensor CPU
+        particles     : (M, d) tensor (any device)
+        prior_samples : (N, d) CPU tensor
     Returns:
-        float — σ
+        float, σ.
     """
     X = particles.detach().cpu().float()
     Y = prior_samples.cpu().float()
@@ -295,24 +288,23 @@ def compute_mmd_sigma(particles, prior_samples):
 
 def mmd_loss_train(X, Y, sigma, kyy_mean=None):
     """
-    MMD² diferenciable entre partículas X y muestras del prior Y.
+    Differentiable MMD² between the particles X and prior samples Y.
 
-    Estimador sesgado (1/n² en lugar de 1/(n(n-1))): el sesgo es O(1/n) y
-    no afecta la dirección del gradiente.  Más estable que el no sesgado
-    cuando n=M=64 es pequeño.
+    Biased estimator (1/n² instead of 1/(n(n−1))): the bias is O(1/n) and does
+    not change the direction of the gradient, and it is more stable than the
+    unbiased one for small n = M.
 
-    El término E[k(y,y')] = kyy_mean es constante respecto a X: se puede
-    precomputar una vez antes del entrenamiento y pasarlo para evitar
-    recalcularlo en cada paso.
+    The term E[k(y,y')] = kyy_mean does not depend on X: it can be computed
+    once before training and passed in.
 
     Args:
-        X        : (M, d) partículas — CON grad (salida de particles_live)
-        Y        : (N, d) muestras del prior — fijas, en el mismo dispositivo
-        sigma    : ancho de banda del kernel (precomputado con compute_mmd_sigma)
-        kyy_mean : float — E[k(y,y')] precomputado (None → se calcula aquí)
+        X        : (M, d) particles, with gradient (output of particles_live)
+        Y        : (N, d) prior samples, fixed, on the same device
+        sigma    : kernel bandwidth (from compute_mmd_sigma)
+        kyy_mean : precomputed E[k(y,y')] (None: computed here)
 
     Returns:
-        Tensor escalar — MMD²  (diferenciable respecto a X)
+        Scalar tensor, MMD² (differentiable with respect to X).
     """
     def K(A, B):
         d = A.unsqueeze(1) - B.unsqueeze(0)      # (n, m, dim)
@@ -335,39 +327,38 @@ def mmd_loss_train(X, Y, sigma, kyy_mean=None):
 
 def sinkhorn_loss(X, Y, blur=0.05, n_iter=50, W_yy=None):
     """
-    Divergencia de Sinkhorn (OT entrópico debiasado) entre partículas y prior.
+    Debiased Sinkhorn divergence (entropic OT) between the particles and the prior.
 
-    S_blur(X, Y) = OT_blur(X, Y) − (1/2)·OT_blur(X, X) − (1/2)·OT_blur(Y, Y)
+    S_blur(X, Y) = OT_blur(X, Y) − ½ OT_blur(X, X) − ½ OT_blur(Y, Y),
 
-    donde OT_blur es el coste de transporte óptimo con regularización entrópica
-    blur.  La versión debiasada es siempre ≥ 0, vale 0 iff X e Y tienen la
-    misma distribución, y elimina el sesgo de contracción del OT entrópico simple.
+    where OT_blur(X, Y) is the transport cost ⟨P, C⟩ of the entropic optimal
+    plan P with regularization `blur`.  Debiasing gives S_blur(X, X) = 0 and
+    removes the shrinking bias of plain entropic OT.
 
-    La implementación usa log-Sinkhorn (numericamente estable) con la matriz de
-    coste normalizada a [0,1] para evitar desbordamiento aritmético.
+    Implemented with log-domain Sinkhorn iterations (numerically stable), with
+    the cost matrix rescaled to [0, 1] to avoid overflow.
 
-    Gradientes:
-        ∂S/∂X = ∂OT_blur(X,Y)/∂X − (1/2)·∂OT_blur(X,X)/∂X
-    Ambos términos dependen de X → fluyen hacia las partículas.
-    OT_blur(Y,Y) no depende de X: se puede precomputar (argumento W_yy).
+    Gradients:
+        ∂S/∂X = ∂OT_blur(X, Y)/∂X − ½ ∂OT_blur(X, X)/∂X;
+    OT_blur(Y, Y) does not depend on X and can be precomputed (argument W_yy).
 
     Args:
-        X     : (n, d) partículas — CON grad
-        Y     : (m, d) prior samples — fijos, mismo dispositivo
-        blur  : regularización del OT (>0; más pequeño ≈ Wasserstein exacto
-                pero más inestable; 0.05–0.1 es un rango razonable)
-        n_iter: iteraciones de Sinkhorn (50 suele ser suficiente para blur≥0.05)
-        W_yy  : float — OT_blur(Y,Y) precomputado (None → se calcula aquí)
+        X      : (n, d) particles, with gradient
+        Y      : (m, d) prior samples, fixed, same device
+        blur   : entropic regularization (> 0; smaller is closer to exact OT but
+                 less stable; 0.05–0.1 is a reasonable range)
+        n_iter : Sinkhorn iterations (50 is usually enough for blur ≥ 0.05)
+        W_yy   : precomputed OT_blur(Y, Y) (None: computed here)
 
     Returns:
-        Tensor escalar — S_blur(X, Y)  (diferenciable respecto a X)
+        Scalar tensor, S_blur(X, Y) (differentiable with respect to X).
     """
     def _cost(A, B):
         diff = A.unsqueeze(1) - B.unsqueeze(0)   # (n, m, d)
         return (diff ** 2).sum(-1)                # (n, m)
 
     def _ot(C, blur, n_iter):
-        """OT_blur con log-Sinkhorn.  C: (n, m) coste normalizado."""
+        """OT_blur by log-domain Sinkhorn; C is the (n, m) rescaled cost."""
         n, m  = C.shape
         log_K = -C / blur
         log_u = torch.zeros(n, device=C.device, dtype=C.dtype)

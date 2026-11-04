@@ -9,35 +9,31 @@ from .config import SEED, DEVICE
 
 
 # =============================================================================
-# § 1  DATASET
+# § 1  DATA SETS
 # =============================================================================
 def get_moons(n=400, noise=0.12, seed=SEED):
     """
-    Genera el dataset make_moons y lo devuelve como tensores PyTorch.
+    make_moons as PyTorch tensors.
 
-    En el contexto del paper, este dataset representa γ_0: la distribución
-    empírica CONJUNTA (features, etiquetas) en el "tiempo de red" t=0:
+    In the setting of the paper this data set is γ_0, the JOINT empirical
+    distribution of (features, labels) at network time t = 0:
 
-        γ_0 = (1/N) Σᵢ δ_{(X₀ⁱ, Y₀ⁱ)}     (medida empírica sobre ℝ² × ℝ)
+        γ_0 = (1/N) Σᵢ δ_{(X₀ⁱ, Y₀ⁱ)}     on ℝ² × ℝ.
 
-    donde (X₀ⁱ, Y₀ⁱ) ∈ ℝ² × ℝ es el i-ésimo par (feature, etiqueta).
-    La ODE desplaza solo la componente de features X₀ⁱ → X_tⁱ; la etiqueta
-    Y₀ⁱ permanece fija en todos los tiempos de red ("pasajero del flujo"):
+    The ODE moves only the features X₀ⁱ → X_tⁱ; the label Y₀ⁱ is carried
+    along unchanged:
 
-        γ_t = (1/N) Σᵢ δ_{(X_tⁱ, Y₀ⁱ)}     (medida empírica sobre ℝ² × ℝ)
+        γ_t = (1/N) Σᵢ δ_{(X_tⁱ, Y₀ⁱ)}.
 
-    Lo que se visualiza en las figuras es la MARGINAL EN x de γ_t:
-        (γ_t)_x = (1/N) Σᵢ δ_{X_tⁱ}  ∈ P(ℝ²)
-    que muestra cómo evolucionan los features, con colores que indican Y₀ⁱ.
-
-    Se aplica StandardScaler para que γ_0 tenga media ≈ 0 y std ≈ 1,
-    condición de regularidad implícita en el paper (datos acotados).
+    The figures show the x-marginal (γ_t)_x = (1/N) Σᵢ δ_{X_tⁱ} ∈ P(ℝ²),
+    coloured by Y₀ⁱ.  Features are standardized (mean ≈ 0, std ≈ 1), in line
+    with the bounded-data assumption of the paper.
 
     Returns:
-        X    : (N, 2) tensor en DEVICE — features estandarizadas
-        y    : (N,) tensor en DEVICE  — etiquetas {0, 1}
-        X_np : (N, 2) array NumPy     — para visualización
-        y_np : (N,) array NumPy       — para visualización
+        X    : (N, 2) tensor on DEVICE, standardized features
+        y    : (N,) tensor on DEVICE, labels in {0, 1}
+        X_np : (N, 2) NumPy array, for plotting
+        y_np : (N,) NumPy array, for plotting
     """
     X_np, y_np = make_moons(n_samples=n, noise=noise, random_state=seed)
     X_np = StandardScaler().fit_transform(X_np).astype(np.float32)
@@ -50,29 +46,26 @@ def get_moons(n=400, noise=0.12, seed=SEED):
 def get_circles(n: int = 400, noise: float = 0.08, factor: float = 0.5,
                 seed: int = SEED):
     """
-    Genera el dataset make_circles y lo devuelve como tensores PyTorch.
+    make_circles as PyTorch tensors.
 
-    Análogo a get_moons() pero con simetría rotacional COMPLETA: el dato γ₀
-    es invariante bajo rotaciones del plano ℝ². Esto implica una predicción
-    teórica sobre la distribución óptima de parámetros ν*:
+    Like get_moons(), but the data γ₀ is invariant under rotations of ℝ².  This
+    gives a theoretical prediction for the optimal parameter distribution ν*:
+    if γ₀ is SO(2)-symmetric, ν* should be (approximately) isotropic too; in
+    particular the input weights a₁ᵐ should spread uniformly over a ring in ℝ²
+    instead of forming the two symmetric peaks seen on make_moons.
 
-        Si γ₀ es isotrópico (simétrico bajo SO(2)), entonces ν* también debería
-        ser (aproximadamente) isotrópico. En particular, los pesos de entrada
-        a₁ᵐ deberían distribuirse uniformemente en S¹ (un anillo en ℝ²),
-        en lugar de los dos picos simétricos observados en make_moons.
-
-    Parámetros:
-        n      : número de muestras totales (mitad por clase)
-        noise  : desviación estándar del ruido gaussiano añadido a cada punto
-        factor : ratio de radio interior / radio exterior (∈ (0,1))
-                 Con factor=0.5: clase 0 en círculo externo, clase 1 en interno
-        seed   : semilla de aleatoriedad para reproducibilidad
+    Args:
+        n      : total number of samples (half per class)
+        noise  : standard deviation of the Gaussian noise added to each point
+        factor : ratio of inner to outer radius, in (0, 1); with factor = 0.5,
+                 class 0 is the outer circle and class 1 the inner one
+        seed   : random seed
 
     Returns:
-        X    : (N, 2) tensor en DEVICE — features estandarizadas
-        y    : (N,) tensor en DEVICE  — etiquetas {0, 1}
-        X_np : (N, 2) array NumPy     — para visualización
-        y_np : (N,) array NumPy       — para visualización
+        X    : (N, 2) tensor on DEVICE, standardized features
+        y    : (N,) tensor on DEVICE, labels in {0, 1}
+        X_np : (N, 2) NumPy array, for plotting
+        y_np : (N,) NumPy array, for plotting
     """
     X_np, y_np = make_circles(n_samples=n, noise=noise, factor=factor,
                               random_state=seed)
@@ -86,38 +79,37 @@ def get_circles(n: int = 400, noise: float = 0.08, factor: float = 0.5,
 def get_california_regression(n_train: int = 800, n_test: int = 400,
                                n_components: int = 2, seed: int = SEED):
     """
-    California Housing proyectado a ℝ² via PCA para regresión.
+    California Housing projected to ℝ² by PCA, for regression.
 
-    El dataset original tiene 8 features (MedInc, HouseAge, AveRooms,
-    AveBedrms, Population, AveOccup, Latitude, Longitude) y target continuo
-    (valor mediano de la vivienda en $100k, rango ~0.15–5.0).
+    The original data set has 8 features (MedInc, HouseAge, AveRooms,
+    AveBedrms, Population, AveOccup, Latitude, Longitude) and a continuous
+    target (median house value in $100k, range ~0.15–5.0).
 
     Pipeline:
-        1. Submuestrear n_train+n_test filas (para velocidad de entrenamiento)
-        2. StandardScaler en features
-        3. PCA(n_components) → ℝ²  (el espacio donde corre la ODE)
-        4. StandardScaler en target  (media=0, std=1 → MSE estable)
+        1. subsample n_train + n_test rows (for training speed)
+        2. standardize the features
+        3. PCA(n_components) → ℝ² (the space where the ODE runs)
+        4. standardize the target (mean 0, std 1, for a stable MSE)
         5. train/test split
 
-    La varianza explicada por PCA(2) se reporta para informar sobre la
-    calidad de la proyección.  En California Housing, las dos primeras
-    componentes capturan principalmente la señal geográfica (Lat/Lon) y
-    de riqueza (MedInc), que son las más predictivas del precio.
+    The variance explained by the projection is reported.  On California
+    Housing the first two components mostly capture the geographic
+    (Latitude/Longitude) and income (MedInc) signals, the most predictive of
+    the price.
 
     Args:
-        n_train      : muestras de entrenamiento
-        n_test       : muestras de test
-        n_components : dimensión de la proyección PCA (= d1 del modelo)
-        seed         : semilla de aleatoriedad
+        n_train      : training samples
+        n_test       : test samples
+        n_components : dimension of the PCA projection (= d1 of the model)
+        seed         : random seed
 
     Returns:
-        dict con:
-            X_train, y_train : tensores en DEVICE
-            X_test,  y_test  : tensores en DEVICE
-            X_train_np, y_train_np, X_test_np, y_test_np : arrays NumPy
-            pca              : objeto PCA ajustado (para visualización)
-            scaler_y         : StandardScaler del target (para invertir escala)
-            explained_var    : fracción de varianza explicada por PCA(2)
+        dict with
+            X_train, y_train, X_test, y_test : tensors on DEVICE
+            X_train_np, y_train_np, X_test_np, y_test_np : NumPy arrays
+            pca           : fitted PCA (for plotting)
+            scaler_y      : target scaler (to undo the standardization)
+            explained_var : fraction of variance explained by the projection
     """
     from sklearn.datasets import fetch_california_housing
 
@@ -145,7 +137,7 @@ def get_california_regression(n_train: int = 800, n_test: int = 400,
 
     explained = float(pca.explained_variance_ratio_.sum())
     print(f"  California Housing PCA({n_components}): "
-          f"varianza explicada = {explained:.1%}  "
+          f"explained variance = {explained:.1%}  "
           f"| train={n_train}  test={n_test}")
 
     return {

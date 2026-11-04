@@ -5,19 +5,17 @@ from .config import DEVICE, style_ax
 
 
 # =============================================================================
-# § 5  HELPERS DE VISUALIZACIÓN
+# § 5  PLOTTING HELPERS
 # =============================================================================
 def plot_decision_boundary(ax, model, X_np, y_np, title=''):
     """
-    Visualiza la frontera de decisión P(y=1|x) = 0.5 en el espacio original ℝ².
+    Plot the decision boundary P(y = 1 | x) = 0.5 in the original space ℝ².
 
-    Evalúa el modelo completo (ODE + clasificador) en una malla densa y colorea
-    cada punto según la probabilidad predicha.  La línea blanca es la isocurva
-    σ(logit)=0.5, que corresponde a la frontera de clasificación.
-
-    En el contexto del paper, esta frontera refleja la acción CONJUNTA de:
-      1. La ODE que transforma X_0 → X_T (separa las clases en ℝ²)
-      2. El clasificador lineal W·X_T + b sobre el espacio transformado
+    Evaluates the full model (ODE + classifier) on a dense grid and colours each
+    point by the predicted probability; the white line is the level set
+    σ(logit) = 0.5, the classification boundary.  It reflects the JOINT action of
+      1. the ODE that maps X_0 → X_T (separating the classes in ℝ²), and
+      2. the linear classifier W·X_T + b on the transported features.
     """
     r = 0.5
     xmin, xmax = X_np[:, 0].min() - r, X_np[:, 0].max() + r
