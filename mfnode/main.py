@@ -10,6 +10,8 @@ Uso:
     python mfnode/main.py --experiment all  # equivalente al primero
 """
 
+from __future__ import annotations
+
 import argparse
 
 from .config import DEVICE, OUTPUT_DIR
