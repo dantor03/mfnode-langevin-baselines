@@ -13,7 +13,7 @@ from matplotlib.lines import Line2D
 
 from .style import (
     AQUA, BLUE, CLASS_COLOR, DIM_LABELS, FINAL_COLOR, INK, INK_2, METHOD_COLOR,
-    METHOD_LABEL, METHOD_MARKER, METHODS, MUTED, ORANGE, PRIOR_COLOR, TIMEAVG_COLOR,
+    METHOD_LABEL, METHOD_MARKER, METHODS, MUTED, ORANGE, PRIOR_COLOR, SURFACE, TIMEAVG_COLOR,
     boundary, class_scatter, eps_colors, eps_label, kde, note, prior_density_1d, save,
     smooth, subplots,
 )
@@ -41,7 +41,7 @@ def _eps_pair_color(eps):
 # ── A: transport of the features ───────────────────────────────────────────────
 
 def plot_A(d, out_dir):
-    fig, ax = subplots(1, 4, width=13, height=3.6)
+    fig, ax = subplots(1, 4, width=13, height=3.95)
     ax = ax[0]
     y = d["y"]
     T, t_mid = _f(d["T"]), _f(d["t_mid"])
@@ -98,7 +98,7 @@ def plot_B(d, out_dir):
     out1 = save(fig, out_dir, "B1_convergence_curves.png")
 
     n = len(eps)
-    fig, ax = subplots(1, n, width=13, height=3.2, sharex=True, sharey=True)
+    fig, ax = subplots(1, n, width=13, height=4.0, sharex=True, sharey=True)
     ax = ax[0]
     speed = np.hypot(d["U"], d["V"])
     scale = speed.max() * 18 if speed.max() > 0 else 1.0
@@ -495,24 +495,29 @@ def plot_K(d, out_dir):
     fig, ax = subplots(1, 3, width=13, height=4.1)
     ax = ax[0]
 
-    floor = -0.25
+    floor = -1.0       # R² below this is a failed fit: drawn off scale, value printed
     finite = vals[np.isfinite(vals)]
-    lo = max(float(finite.min()), floor) - 0.03
+    on_scale = finite[finite >= floor]
+    off = vals < floor
+    # off-scale values sit on a line of their own, clearly below every plotted one
+    lo = (float(on_scale.min()) if on_scale.size else floor) - (0.08 if off.any() else 0.03)
     hi = float(finite.max()) + 0.04
-    off = vals < lo
     for k, m in enumerate(METHODS):
         v = vals[k]
         ax[0].plot(eg, np.where(off[k], lo, v), color=METHOD_COLOR[m], marker=METHOD_MARKER[m],
                    label=METHOD_LABEL[m])
-        for j in np.nonzero(off[k])[0]:
-            ax[0].annotate(f"{v[j]:.2f}", (eg[j], lo), xytext=(-6, 10 + 14 * k),
-                           textcoords="offset points", ha="right", fontsize=9.5,
-                           color=METHOD_COLOR[m], fontweight="bold")
+        for n_off, j in enumerate(np.nonzero(off[k])[0]):
+            ax[0].plot(eg[j], lo, marker="v", ms=11, color=METHOD_COLOR[m], mec=SURFACE, mew=1.5)
+            # printed right under its marker, in the space kept free below the curves
+            ax[0].annotate(rf"$R^2 = {v[j]:.1f}$ at $\varepsilon = {eg[j]:g}$",
+                           (eg[j], lo), xytext=(6, -12 - 13 * (k + n_off)),
+                           textcoords="offset points", ha="right", va="top",
+                           fontsize=9.5, color=METHOD_COLOR[m])
     ax[0].set_xscale("log")
-    ax[0].set_ylim(lo - 0.02, hi)
+    ax[0].set_ylim(lo - (0.12 if off.any() else 0.03), hi)
     title = r"Test $R^2$ against $\varepsilon$"
     if off.any():
-        title += f" (below {lo:.2f}: value printed)"
+        title += r" ($\blacktriangledown$: off scale)"
     ax[0].set(title=title, xlabel=r"$\varepsilon$", ylabel="$R^2$ (test)")
     ax[0].legend(loc="lower left", fontsize=9.5)
 

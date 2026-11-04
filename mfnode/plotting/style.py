@@ -109,7 +109,8 @@ def save(fig, out_dir, name) -> Path:
     _readable_log_ticks(fig)
     out = Path(out_dir) / name
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=160)
+    # bbox "tight": nothing is clipped even where the fonts of the machine differ
+    fig.savefig(out, dpi=160, bbox_inches="tight", pad_inches=0.08)
     plt.close(fig)
     return out
 

@@ -186,6 +186,8 @@ Adam como base es igualmente necesario: SGD puro no converge porque los gradient
 
 **Layout 1×4:** $\gamma_0$ (lunas entrelazadas), $\gamma_{T/2}$, $\gamma_T$ con las trayectorias completas de 40 partículas y la recta del clasificador lineal sobre $X_T$ (discontinua), y la frontera de decisión en $\mathbb{R}^2$ sobre $P(y=1|x)$ sombreada. Cada panel ajusta su ventana a los puntos de ese instante. La frontera en el espacio original es no lineal pues incorpora toda la geometría del flujo $\phi_T$, aunque el clasificador final sea lineal sobre $X_T$.
 
+**Resultado:** accuracy 100%, $J^* = 0.0011$.
+
 ---
 
 ## 5. Experimento B — Efecto del parámetro $\varepsilon$
@@ -200,11 +202,21 @@ Adam como base es igualmente necesario: SGD puro no converge porque los gradient
 
 $J$ y $\mathcal{E}$ van en escala logarítmica, sin recortes; hay una curva por $\varepsilon$, en azules de claro ($\varepsilon$ pequeño) a oscuro. La accuracy se muestra como media móvil de ventana 15.
 
-**Panel izquierdo (pérdida total $J$):** Todos los modelos convergen. Para $\varepsilon$ mayores, el valor asintótico $J^*$ es más alto porque incluye mayor penalización de regularización. La velocidad de convergencia es comparable entre todos los $\varepsilon$.
+**Resultados:**
 
-**Panel central (accuracy):** Todos los modelos alcanzan ≥99% de exactitud, incluyendo $\varepsilon = 0.5$. La distinción entre $\varepsilon = 0$ y $\varepsilon > 0$ no es en accuracy sino en **garantías teóricas de convergencia**.
+| $\varepsilon$ | $J^*$ | accuracy final |
+|---|---|---|
+| 0 | 0.00012 | 1.000 |
+| 0.001 | 0.00027 | 1.000 |
+| 0.01 | 0.0017 | 1.000 |
+| 0.1 | 0.151 | 0.963 |
+| 0.5 | 0.609 | 0.500 |
 
-**Panel derecho (reg. supercoerciva de energía $\mathcal{E}/N_\text{params}$):** Con $\varepsilon = 0$ la penalización es la más alta (parámetros alejados del prior porque nada los atrae). A medida que $\varepsilon$ aumenta, los parámetros se concentran cerca del origen, reduciendo $\mathcal{E}$.
+**Panel izquierdo (pérdida total $J$):** Con $\varepsilon \leq 0.01$ el coste baja de forma sostenida hasta $J^* \sim 10^{-4}$–$10^{-3}$; cuanto mayor es $\varepsilon$, más alto el valor final (más penalización y más ruido). Con $\varepsilon = 0.1$ el coste se estanca en torno a 0.15, y con $\varepsilon = 0.5$ **sube** desde el valor inicial hasta ≈ 1.7: el ruido de Langevin, de amplitud $\propto\sqrt{\varepsilon}$, domina al gradiente.
+
+**Panel central (accuracy):** Los modelos con $\varepsilon \leq 0.01$ llegan al 100% hacia la época 100. Con $\varepsilon = 0.1$ la accuracy oscila y acaba en 96%. Con $\varepsilon = 0.5$ el modelo no aprende: tras un pico transitorio del 79% cae al 50% (azar) y ahí se queda.
+
+**Panel derecho (energía del prior $\mathcal{E}/N_\text{params}$):** La energía **crece** con $\varepsilon$: ≈ 0.12 para $\varepsilon \leq 0.01$, 0.42 para $\varepsilon = 0.1$ y 1.93 para $\varepsilon = 0.5$. Con pSGLD $\varepsilon$ es también la temperatura, y el ruido dispersa los parámetros en lugar de concentrarlos en el origen.
 
 ### B2 — Fronteras de decisión + campo de velocidad
 
@@ -212,7 +224,7 @@ $J$ y $\mathcal{E}$ van en escala logarítmica, sin recortes; hay una curva por 
 
 Layout **1×5** (una columna por $\varepsilon$, ventana $[-2.5, 2.5]^2$): frontera de decisión $P(y=1|x) = 0.5$ en negro sobre la probabilidad sombreada, los datos y el campo de velocidad $F(x, t=0.5)$ a mitad del flujo en flechas grises, con la misma escala en todos los paneles para que su longitud sea comparable entre $\varepsilon$.
 
-Mayor $\varepsilon$ produce fronteras más suaves y regulares; la zona de transición entre clases es más ancha (el modelo reduce su certeza lejos de la frontera). El campo muestra cómo la ODE empuja las dos clases en direcciones opuestas para crear la separación que el clasificador lineal después explota.
+Para $\varepsilon \leq 0.01$ las tres fronteras son prácticamente idénticas: siguen la forma de las lunas con un remolino en el centro. Con $\varepsilon = 0.1$ la frontera es más simple, la zona de transición entre clases más ancha y algunos puntos quedan mal clasificados (96%). Con $\varepsilon = 0.5$ no hay frontera: $P(y=1|x) \approx 0.5$ en toda la ventana y el campo de velocidad, el más largo de todos, ya no separa las clases. Para $\varepsilon$ pequeño el campo muestra cómo la ODE empuja las dos clases en direcciones opuestas para crear la separación que el clasificador lineal después explota.
 
 ---
 
@@ -224,27 +236,30 @@ Mayor $\varepsilon$ produce fronteras más suaves y regulares; la zona de transi
 
 ![Verificación PL](../figures/C_pl_verification.png)
 
-### C1 — Diagrama log-log: $\|\nabla J\|^2$ vs $(J - J^*)$
+**Paneles:**
+- **C1 — log-log, $\|\nabla J\|^2$ frente a $J - J^*$:** un punto por época, coloreado por $\varepsilon$, con la recta $2\hat{\mu}_\text{min}(J-J^*)$. Si PL se cumple, los puntos quedan por encima con pendiente ≈ 1.
+- **C2 — semilog, $J(\theta^s) - J^*$ por época:** con PL el decaimiento es exponencial, $J(\theta_s) - J^* \lesssim (J(\theta_0) - J^*)\, e^{-2\mu s}$.
+- **C3 — ratio $\|\nabla J\|^2 / (2(J - J^*))$ por época**, con la recta $\hat{\mu}_\text{min}$.
 
-Cada punto es una época, coloreado por $\varepsilon$. La **línea negra** es $2\hat{\mu}_\text{min}(J-J^*)$, la cota estimada con la constante PL más conservadora entre todos los $\varepsilon$.
+$\hat{\mu}$ (en la leyenda) es el percentil 10 del ratio. El paper garantiza $\mu > 0$ para todo $\varepsilon > 0$ pero **no** que $\mu$ crezca con $\varepsilon$.
 
-Los puntos están por encima de la línea negra, confirmando PL con constante $\hat{\mu} > 0$. La pendiente $\approx 1$ en log-log es la firma visual de la condición PL: $\|\nabla J\|^2$ crece proporcionalmente a $(J-J^*)$.
+### Resultado de la ejecución actual: no concluyente
 
-### C2 — Convergencia exponencial (escala semilog)
+| $\varepsilon$ | $\hat{\mu}$ | $J^*$ | accuracy final |
+|---|---|---|---|
+| 0 | 0.158 | 0.2824 | 0.85 |
+| 0.001 | 0.158 | 0.2825 | 0.85 |
+| 0.01 | 0.158 | 0.2828 | 0.85 |
+| 0.1 | 0.158 | 0.2863 | 0.85 |
+| 0.5 | 0.160 | 0.3014 | 0.85 |
 
-El exceso de coste $J(\theta^s) - J^*$ en escala logarítmica muestra caída aproximadamente lineal (decay exponencial), consistente con:
+Con 700 épocas de SGD a lr = 0.01 el entrenamiento **no ha convergido**:
+- el coste sigue bajando en la última época (el mínimo de la trayectoria es justo la última), $\|\nabla J\|^2$ sigue en $2.5\cdot10^{-3}$ y la accuracy se queda en 85%, frente al 100% que alcanzan los mismos modelos con Adam (A, B);
+- como $J^*$ se toma como el mínimo de la trayectoria, $J - J^* \to 0$ al final de forma artificial: es la caída vertical de C2 y la subida del ratio en C3, y en C1 los puntos de la izquierda forman una recta horizontal (gradiente constante con $J - J^*$ cada vez menor) en lugar de una pendiente 1;
+- las cinco curvas son casi idénticas: $\varepsilon\cdot\mathcal{E}$ es pequeño frente al BCE en esta fase, así que $\varepsilon$ no cambia nada;
+- $\hat{\mu} = 0.158$ es el valor del ratio hacia la época 280, en mitad del descenso, y no mide la constante PL cerca del minimizador.
 
-$$J(\theta_s) - J^* \lesssim (J(\theta_0) - J^*) \cdot e^{-2\mu s}$$
-
-Con SGD + lr constante el aplanamiento final refleja genuina convergencia al mínimo, sin artefactos del scheduler.
-
-### Constante PL estimada $\hat{\mu}$ por $\varepsilon$ (en la leyenda)
-
-Estimada como el percentil 10 del ratio $\|\nabla J\|^2 / (2(J - J^*))$. El paper garantiza $\mu > 0$ para todo $\varepsilon > 0$ pero **no** que $\mu$ crezca con $\varepsilon$. Empíricamente $\hat{\mu}$ puede decrecer con $\varepsilon$ porque la regularización eleva $J^*$ (mayor denominador en el ratio). El resultado clave es $\hat{\mu} > 0$ para todo $\varepsilon > 0$.
-
-### C3 — Ratio PL vs época (escala log)
-
-El ratio $\|\nabla J\|^2 / (2(J - J^*))$ se mantiene positivo y por encima de $\hat{\mu}_\text{min}$ (línea negra) durante todo el entrenamiento. La condición PL se cumple no solo al inicio sino también en las etapas tardías, confirmando la hipótesis **local** del Meta-Teorema 2.
+**Pendiente:** rehacer C con un descenso que converja (más épocas o un paso mayor, posible porque el descenso es a lote completo y determinista), con $J^*$ tomado de una ejecución de referencia más larga y no de la propia trayectoria, y calculando $\hat{\mu}$ solo en las épocas con $J - J^*$ claramente por encima de la incertidumbre de $J^*$.
 
 ---
 
@@ -276,6 +291,19 @@ Los $\hat{\mu}_{PL}$ de cada seed se imprimen en consola y se guardan en `figure
 
 La banda de D3 debe ser la más ancha (combina ambas fuentes). Con $\varepsilon=0.01$ la condición PL garantiza $\hat{\mu} > 0$ cerca del óptimo; la regularización no reduce necesariamente la varianza entre seeds, sino que asegura la existencia de un mínimo global estable. Las fronteras de D2/D3 son cualitativamente similares entre sí a pesar de provenir de $(\gamma_0, \theta_0)$ completamente distintos — verificación visual del Meta-Teorema 1.
 
+### Resultados
+
+| | $\varepsilon$ | $J^*$ (media ± std) | $\hat{\mu}$ (media ± std) |
+|---|---|---|---|
+| D1 | 0 | 0.022 ± 0.034 | 0.026 ± 0.022 |
+| D1 | 0.01 | 0.024 ± 0.035 | 0.029 ± 0.026 |
+| D2 | 0 | 0.0007 ± 0.0013 | 0.028 ± 0.011 |
+| D2 | 0.01 | 0.0018 ± 0.0013 | 0.032 ± 0.013 |
+| D3 | 0 | 0.042 ± 0.064 | 0.024 ± 0.028 |
+| D3 | 0.01 | 0.044 ± 0.065 | 0.027 ± 0.031 |
+
+La dispersión de D1 y D3 viene de tres inicializaciones concretas (semillas 0, 4 y 5), que se quedan en $J^* \approx 0.07$–$0.16$ con accuracy 91–97%, tanto con $\varepsilon = 0$ como con $\varepsilon = 0.01$; las otras siete llegan a accuracy 100% y $J^* \approx 10^{-3}$. Variando solo los datos (D2) los diez runs llegan a accuracy ≥ 99.8%. Con $\varepsilon = 0.01$ no desaparecen esos tres mínimos peores: la genericidad del paper habla de casi toda $\gamma_0$, no de que el descenso desde cualquier inicialización llegue al mínimo global.
+
 ---
 
 ## 8. Experimento E — Robustez de $\nu^*$ (make\_moons)
@@ -296,6 +324,8 @@ La banda de D3 debe ser la más ancha (combina ambas fuentes). Con $\varepsilon=
 - **Panel derecho (E-2):** Ídem pero variando el dataset. Curvas apretadas indican robustez a $\gamma_0$ — directa verificación de que $\nu^*$ es genuinamente una propiedad de la geometría del problema, no de las condiciones de inicio.
 
 Si el Meta-Teorema 1 se cumple (minimizador único estable), las curvas de importancia deben ser cualitativamente similares entre seeds: mismo "codo" pronunciado en los primeros ranks (pocas neuronas dominantes) y misma caída. La comparación E-1 vs E-2 permite separar cuánta variabilidad proviene de la inicialización y cuánta del dataset.
+
+**Resultados:** en E-1, ocho de las diez inicializaciones llegan a accuracy 100% con $J^* \approx 0.002$; las semillas 4 y 5 se quedan en $J^* \approx 0.15$ con accuracy 95.5%. En E-2 los diez datasets llegan a accuracy ≥ 99.8% ($J^*$ entre 0.002 y 0.016).
 
 ---
 
@@ -318,6 +348,8 @@ Si el Meta-Teorema 1 se cumple (minimizador único estable), las curvas de impor
 - **Dirección de $a_1^m$:** histograma del ángulo ponderado por $\|a_0^m\|_2$ en F1 y F2, frente a la densidad uniforme. Si $\nu^*$ hereda la simetría $SO(2)$ de los datos, el histograma debe salir plano.
 
 **Interpretación:** Curvas apretadas en F1 y F2 indican que la convergencia es robusta tanto a variaciones del dataset como de la inicialización. La comparación F1 vs F2 permite identificar cuál fuente de aleatoriedad introduce más variabilidad.
+
+**Resultados:** accuracy media 0.9993 ± 0.0011 en F1 (datos) y 0.9983 ± 0.0025 en F2 (inicialización); $J^*$ entre 0.010 y 0.018 en F1 y entre 0.006 y 0.023 en F2. Las dos fuentes de variabilidad dan resultados igual de estables, algo más dispersos al cambiar la inicialización.
 
 ---
 
@@ -348,7 +380,7 @@ $$\text{gap}(N) = \text{BCE}_\text{test}(N) - \text{BCE}_\text{train}(N).$$
 
 ## 11. Experimento H — Diagnóstico de pSGLD
 
-> **Nota sobre las cifras de H–K.** Los resultados numéricos de las secciones 11–14 proceden de una versión anterior del código en la que el prior era $\nu^\infty \propto e^{-\ell(a)/\varepsilon}$ (muy concentrado para $\varepsilon = 0.01$). El código actual usa $\nu^\infty \propto e^{-\ell(a)}$, que no depende de $\varepsilon$, así que estas cifras (y las comparaciones con MMD y Sinkhorn, que usan muestras del prior) deben regenerarse antes de citarlas: `python -m mfnode -e H` (ídem I, J, K).
+> Las cifras de H–K son de la ejecución con el código actual, con prior $\nu^\infty \propto e^{-\ell(a)}$ (independiente de $\varepsilon$). Sustituyen a las de una versión anterior que usaba $e^{-\ell(a)/\varepsilon}$.
 
 **Objetivo:** Cuantificar la brecha entre la distribución estacionaria empírica de pSGLD ($\hat{\nu}^*$) y el prior de Gibbs teórico $\nu^\infty$. La causa es estructural: $\mathrm{KL}(\nu_N\|\nu^\infty) = +\infty$ porque $\nu_N = \frac{1}{M}\sum_m \delta_{a^m}$ es discreta y $\nu^\infty$ es continua — el término entrópico del funcional $J$ no está bien definido en el régimen discreto.
 
@@ -363,13 +395,13 @@ con kernel gaussiano $k(x,y) = \exp(-\|x-y\|^2/2\sigma^2)$, $\sigma$ por heurís
 
 **Resultados:**
 
-| Par | MMD² |
-|---|---|
-| $\nu_N$ vs $\hat{\nu}^*$ | ≈ 0 (pSGLD mezcla bien internamente) |
-| $\hat{\nu}^*$ vs $\nu^\infty$ | **0.217** (brecha real entre pSGLD y el prior teórico) |
-| $\nu_N$ vs $\nu^\infty$ | 0.512 |
+| Par | MMD² | $W_1$ por coordenada |
+|---|---|---|
+| $\nu_N$ vs $\hat{\nu}^*$ | −0.003 (≈ 0) | 0.05–0.09 |
+| $\hat{\nu}^*$ vs $\nu^\infty$ | **0.071** | 0.23–0.48 |
+| $\nu_N$ vs $\nu^\infty$ | 0.027 | 0.19–0.42 |
 
-**Conclusión:** pSGLD es internamente consistente pero no implementa fielmente la regularización entrópica del paper. El prior $\nu^\infty$ es bimodal (visible en los histogramas 1D); pSGLD solo explora uno de los dos modos.
+**Conclusión:** las 64 partículas finales son una muestra típica de la estacionaria de pSGLD: su distancia a $\hat{\nu}^*$ está al nivel del ruido del estimador (el MMD² insesgado sale incluso negativo). $\hat{\nu}^*$ sí se separa del prior: es más estrecha que $\nu^\infty$ en $a_0^{(1)}$, $a_1^{(1)}$ y $a_2$, con un pico en 0, y bimodal en $a_0^{(0)}$ y $a_1^{(0)}$, mientras que el prior es unimodal. Esa separación es la esperada, porque con $\varepsilon = 0.01$ el término de datos aleja $\nu^*$ del prior. Por eso H no basta para decir si pSGLD muestrea bien $\nu^*$: para eso haría falta una referencia de $\nu^*$ independiente. Con solo 64 partículas el MMD² frente al prior también es ruidoso, lo que explica que $\nu_N$ salga más cerca del prior (0.027) que $\hat{\nu}^*$ (0.071).
 
 ![Diagnóstico pSGLD](../figures/H_psgld_diagnostic.png)
 
@@ -390,7 +422,17 @@ implementada en dominio logarítmico para estabilidad numérica.
 
 **Figura (2×2):** BCE de entrenamiento; marginal de $a_0^{(0)}$ (prior, $\hat{\nu}^*_\text{pSGLD}$ y las partículas entrenadas con MMD y Sinkhorn); $W_1$ por coordenada entre las partículas **entrenadas** de cada método y $\hat{\nu}^*_\text{pSGLD}$, con las partículas finales del propio pSGLD como suelo de muestreo ($M = 64$); y $W_1$ tras continuar cada solución 1000 pasos con pSGLD (la comparación original). Esa continuación acerca cualquier punto de partida a la estacionaria de pSGLD, así que el tercer panel es el que compara los regularizadores tal cual.
 
-**Resultados:** Los tres métodos convergen a accuracy ≈ 90% y a distribuciones de parámetros similares (MMD²($\nu_\text{reg}$, $\hat{\nu}^*_\text{pSGLD}$) ≈ 0.014–0.019). En clasificación la tarea no discrimina entre regularizadores.
+**Resultados:** Los tres métodos llegan a accuracy 100%. MMD y Sinkhorn bajan el BCE de forma suave hasta ≈ $1$–$2\cdot10^{-4}$; pSGLD es más ruidoso y acaba en ≈ $6\cdot10^{-4}$. Las distribuciones de parámetros son parecidas:
+
+| | MMD² frente a $\hat{\nu}^*_\text{pSGLD}$ | $W_1$ por coordenada |
+|---|---|---|
+| partículas finales de pSGLD (suelo de muestreo) | −0.007 | 0.02–0.04 |
+| partículas entrenadas con MMD | −0.0003 | 0.06–0.11 |
+| partículas entrenadas con Sinkhorn | 0.002 | 0.05–0.24 |
+| MMD + 1000 pasos de pSGLD | 0.005 | 0.06–0.10 |
+| Sinkhorn + 1000 pasos de pSGLD | 0.007 | 0.05–0.20 |
+
+Todos los MMD² están al nivel del ruido de muestreo con $M = 64$. La diferencia más visible es Sinkhorn en $a_2$ ($W_1 = 0.24$). En clasificación la tarea no discrimina entre regularizadores.
 
 ![Comparación regularizadores](../figures/I_regularizer_comparison.png)
 
@@ -398,7 +440,7 @@ implementada en dominio logarítmico para estabilidad numérica.
 
 ## 13. Experimento J — Regresión: California Housing PCA(2)
 
-**Motivación:** En clasificación, $\varepsilon\cdot\mathrm{reg}/\text{BCE} \approx 333\%$. En regresión con $\varepsilon=0.01$, $\varepsilon\cdot\mathrm{reg}/\text{MSE} \approx 0.25\%$: el regularizador es invisible. La comparación en regresión es más informativa.
+**Motivación:** En clasificación el BCE final es tan pequeño que el regularizador pesa más que él: con pSGLD en el Experimento I, $\varepsilon\cdot\mathrm{reg}/\text{BCE} \approx 2$ al final. En regresión con $\varepsilon=0.01$ el MSE no baja de ≈ 0.6 y el regularizador pesa poco: $\varepsilon\cdot\mathrm{reg}/\text{MSE} \approx 0.2\%$ con pSGLD, menos del 0.1% con MMD y 3.6% con Sinkhorn (Experimento K). La comparación en regresión es más informativa.
 
 **Dataset:** California Housing (8 variables: MedInc, HouseAge, AveRooms, AveBedrms, Population, AveOccup, Latitude, Longitude). Se proyecta a $\mathbb{R}^2$ por PCA:
 - **PC1** (25.7%): eje geográfico dominado por Latitud (+0.62) y Longitud (−0.60)
@@ -406,15 +448,15 @@ implementada en dominio logarítmico para estabilidad numérica.
 
 El techo de $R^2 \approx 0.25$ refleja que el 51.1% de varianza descartada por PCA(2) contiene información predictiva del precio.
 
-**Resultados** ($\varepsilon=0.01$, 500 épocas):
+**Resultados** ($\varepsilon=0.01$, 700 épocas):
 
-| Método | $R^2_\text{test}$ | MSE$_\text{test}$ |
-|---|---|---|
-| pSGLD | 0.187 | 0.845 |
-| MMD-reg | 0.221 | 0.782 |
-| Sinkhorn-reg | 0.232 | 0.770 |
+| Método | MSE$_\text{train}$ | MSE$_\text{test}$ | $R^2_\text{train}$ | $R^2_\text{test}$ |
+|---|---|---|---|---|
+| pSGLD | 0.717 | 0.816 | 0.282 | 0.187 |
+| MMD-reg | 0.612 | 0.804 | 0.387 | 0.199 |
+| Sinkhorn-reg | 0.596 | 0.815 | 0.403 | 0.188 |
 
-pSGLD subestima sistemáticamente los precios altos y tiene mayor varianza de error. La hipótesis de que la inferioridad es un artefacto de escala de $\varepsilon$ se investiga en el Experimento K.
+En test los tres métodos empatan ($R^2$ entre 0.19 y 0.20). MMD y Sinkhorn ajustan mejor el entrenamiento ($R^2$ 0.39–0.40 frente a 0.28) pero no generalizan mejor: su brecha entre train y test es el doble que la de pSGLD. Los tres subestiman los precios más altos (la columna de puntos de la derecha del tercer panel es el valor máximo censurado del dataset). El efecto de la escala de $\varepsilon$ se estudia en el Experimento K.
 
 ![Regresión California Housing](../figures/J_california_regression.png)
 
@@ -422,24 +464,26 @@ pSGLD subestima sistemáticamente los precios altos y tiene mayor varianza de er
 
 ## 14. Experimento K — Barrido de $\varepsilon$ en regresión
 
-**Motivación:** Con $\varepsilon=0.01$ la fracción de regularización en regresión es 0.003 vs 3.33 en clasificación. Se barre $\varepsilon \in \{0.001, 0.01, 0.1, 0.5, 1.0, 5.0\}$ con las mismas muestras del prior para todos los $\varepsilon$ ($\nu^\infty \propto e^{-\ell(a)}$ no depende de $\varepsilon$).
+**Motivación:** Con $\varepsilon=0.01$ la fracción de regularización en regresión es ≈ 0.002 con pSGLD, frente a ≈ 2 en clasificación. Se barre $\varepsilon \in \{0.001, 0.01, 0.1, 0.5, 1.0, 5.0\}$ con las mismas muestras del prior para todos los $\varepsilon$ ($\nu^\infty \propto e^{-\ell(a)}$ no depende de $\varepsilon$).
 
 **Resultados ($R^2_\text{test}$):**
 
 | $\varepsilon$ | pSGLD | MMD | Sinkhorn |
 |---|---|---|---|
-| 0.001 | **0.236** | 0.205 | 0.218 |
-| 0.01 | 0.158 | **0.221** | 0.232 |
-| 0.1 | −0.000 | 0.216 | **0.253** |
-| 0.5 | −0.003 | 0.212 | 0.240 |
-| 1.0 | −0.206 | 0.219 | 0.208 |
-| 5.0 | −28.8 | 0.197 | 0.094 |
+| 0.001 | **0.236** | **0.212** | 0.208 |
+| 0.01 | 0.158 | 0.211 | 0.198 |
+| 0.1 | −0.000 | 0.201 | 0.214 |
+| 0.5 | −0.003 | 0.202 | 0.228 |
+| 1.0 | −0.265 | 0.160 | **0.229** |
+| 5.0 | −51.6 | 0.181 | 0.181 |
+
+Fracción de regularización $\varepsilon\cdot\mathrm{reg}/\text{MSE}$: pSGLD 0.000 → 9.8, MMD siempre < 0.01, Sinkhorn 0.004 → 11.2 (de $\varepsilon = 0.001$ a $\varepsilon = 5$).
 
 **Conclusiones:**
-- **pSGLD**: funciona solo con $\varepsilon\leq 0.001$ — su ruido Langevin $\propto\sqrt{\varepsilon}$ destruye el aprendizaje para $\varepsilon\geq 0.1$. Su mejor $R^2$ se alcanza cuando la regularización desaparece ($\varepsilon\to 0$).
-- **MMD**: prácticamente plano en $R^2\approx 0.21$ para todo $\varepsilon\in[0.001, 1.0]$. La fracción de regularización es siempre pequeña porque MMD² está acotado por construcción.
-- **Sinkhorn**: óptimo en $\varepsilon=0.1$ ($R^2=0.253$, el mejor global). Colapsa para $\varepsilon\geq 1$ porque la fracción de regularización supera el 200%.
-- **Ranking definitivo al $\varepsilon$ óptimo**: Sinkhorn (0.253) > pSGLD (0.236) > MMD (0.221). La inferioridad de pSGLD en J no era solo un artefacto de escala.
+- **pSGLD**: funciona solo con $\varepsilon\leq 0.01$: su ruido de Langevin $\propto\sqrt{\varepsilon}$ destruye el aprendizaje a partir de $\varepsilon = 0.1$ ($R^2 \approx 0$) y con $\varepsilon = 5$ diverge (MSE = 52.8). Su mejor $R^2$ se alcanza cuando la regularización casi desaparece ($\varepsilon = 0.001$).
+- **MMD**: casi plano, $R^2$ entre 0.20 y 0.21 para $\varepsilon \leq 0.5$ y algo peor después (0.16–0.18). La fracción de regularización es siempre pequeña porque MMD² está acotado por construcción.
+- **Sinkhorn**: mejora ligeramente con $\varepsilon$ hasta $\varepsilon = 1$ ($R^2 = 0.229$) y baja a 0.181 con $\varepsilon = 5$, sin colapsar aunque el regularizador pese once veces el MSE.
+- **Al $\varepsilon$ óptimo de cada método**: pSGLD (0.236, $\varepsilon = 0.001$) > Sinkhorn (0.229, $\varepsilon = 1$) > MMD (0.212, $\varepsilon = 0.001$). Las diferencias son de 0.025 como mucho en $R^2$, con una sola semilla y una sola partición train/test, así que no bastan para ordenar los métodos; harían falta varias semillas.
 
 ![Barrido de epsilon](../figures/K_epsilon_sweep.png)
 
@@ -450,17 +494,16 @@ pSGLD subestima sistemáticamente los precios altos y tiene mayor varianza de er
 | Resultado del paper | Verificación empírica |
 |---|---|
 | La ODE transforma $\gamma_0$ en $\gamma_T$ linealmente separable | Exp. A: lunas → puntos separados, acc ≈ 100% |
-| $\varepsilon > 0$ concentra los parámetros cerca de $\nu^\infty$ | Exp. B: std($\theta$) decrece con $\varepsilon$; campo de velocidad más uniforme |
-| Condición PL: $\|\nabla J\|^2 \geq 2\mu(J-J^*)$ con $\mu > 0$ | Exp. C: ratio PL > 0 en todas las épocas para todo $\varepsilon > 0$ |
-| Convergencia exponencial bajo PL | Exp. C2: decay lineal en escala log con SGD+lr constante |
+| $\varepsilon$ es a la vez peso del regularizador y temperatura | Exp. B: con pSGLD, $\varepsilon \leq 0.01$ llega al 100% de accuracy, $\varepsilon = 0.1$ al 96% y $\varepsilon = 0.5$ no aprende (50%); la energía de los parámetros crece con $\varepsilon$ |
+| Condición PL: $\|\nabla J\|^2 \geq 2\mu(J-J^*)$ con $\mu > 0$, y convergencia exponencial | Exp. C: **pendiente**; la ejecución actual no converge en 700 épocas (accuracy 85%, $J^*$ tomado del final de la trayectoria) y no permite medir $\mu$ (§6) |
 | Genericidad (Meta-Teorema 1): minimizador único para casi toda $\gamma_0$ | Exp. D2/D3: fronteras de decisión cualitativamente similares entre data seeds |
-| $\varepsilon > 0$ garantiza existencia de minimizador estable cerca del óptimo | Exp. D1: $\hat{\mu} > 0$ para todo init seed con $\varepsilon=0.01$ |
+| $\varepsilon > 0$ garantiza existencia de minimizador estable cerca del óptimo | Exp. D1: $\hat{\mu} > 0$ para todo init seed con $\varepsilon=0.01$, aunque 3 de 10 inicializaciones acaban en un mínimo peor (accuracy 97%) con y sin regularización |
 | $\nu^*$ es robusta a las condiciones de entrenamiento | Exp. E: curvas de importancia $\|a_0^m\|_2$ estables entre seeds |
 | La convergencia es robusta a semillas de datos e inicialización | Exp. F: make\_circles — bandas de pérdida estrechas en F1 y F2 |
 | *Problema abierto*: $J^*_N \to J^*_\infty$ cuando $N \to \infty$ | Exp. G: BCE$_\text{test}$ converge con tasa empírica $\alpha \approx 0.78$–$0.85$ |
-| $\mathrm{KL}(\nu_N\|\nu^\infty)=+\infty$ con $M=64$ Dirac deltas | Exp. H: pSGLD mezcla bien internamente pero MMD²($\hat{\nu}^*$, $\nu^\infty$)=0.217; no captura la bimodalidad del prior |
-| MMD² y Sinkhorn son alternativas bien definidas a la KL | Exp. I: en clasificación los tres métodos son equivalentes; Exp. J/K: Sinkhorn supera a pSGLD en regresión |
-| La escala de $\varepsilon$ es crítica en regresión | Exp. K: ranking al $\varepsilon$ óptimo — Sinkhorn (0.253) > pSGLD (0.236) > MMD (0.221); pSGLD colapsa para $\varepsilon\geq 0.1$ |
+| $\mathrm{KL}(\nu_N\|\nu^\infty)=+\infty$ con $M=64$ Dirac deltas | Exp. H: las partículas finales son una muestra típica de la estacionaria de pSGLD (MMD² ≈ 0), que se separa del prior (MMD² = 0.071) como corresponde a un óptimo que ajusta los datos |
+| MMD² y Sinkhorn son alternativas bien definidas a la KL | Exp. I: en clasificación los tres métodos llegan al 100% con distribuciones de parámetros parecidas; Exp. J: en regresión empatan en test ($R^2$ 0.19–0.20) |
+| La escala de $\varepsilon$ es crítica en regresión | Exp. K: pSGLD colapsa para $\varepsilon\geq 0.1$; MMD y Sinkhorn aguantan hasta $\varepsilon = 5$. Al $\varepsilon$ óptimo, pSGLD (0.236) ≈ Sinkhorn (0.229) ≈ MMD (0.212), diferencias de una sola semilla |
 
 **Limitaciones de la implementación:**
 1. **Restricción temporal:** $a_0^m$ y $a_1^m$ son constantes en $t$; solo $a_2^m(t)$ varía linealmente. El espacio de controles es un subconjunto estricto del del paper.
